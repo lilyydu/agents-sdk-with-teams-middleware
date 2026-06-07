@@ -1,24 +1,59 @@
-# Teams Extension RFC — examples
+# Teams Extension — RFC sample
 
-Four files showing the adoption ramp described in `RFC-teams-extension.md`:
+A zero-core-change design for Teams support in the Microsoft 365 Agents SDK
+for Python.
 
-| File | What it adds |
-|---|---|
-| `phase1_basic.py` | Agents SDK only — works on every channel (LCM) |
-| `phase2_plumbing.py` | + `TeamsChannelAdapter` — plumbing, no handler changes |
-| `phase3_deep.py` | + `TeamsDeepExtension` — rich Teams handlers (additive) |
-| `phase4_override.py` | `@teams.on_message()` — Teams handles text on Teams only |
+## Files
 
-These are *design artifacts*, not runnable apps. They import symbols that the
-RFC proposes adding (e.g., `AgentApplication.use(...)`,
-`microsoft_agents.hosting.teams.teams_channel_adapter`) — those don't exist on
-`main` yet. They're here to make the API tangible.
+| File | What it shows |
+| --- | --- |
+| `01_plumbing_only.py` | Generic `AgentApplication` code + one `install_teams(app)` call. Pure LCM developer experience, Teams-correct on the wire. |
+| `02_invoke_escape_hatch.py` | `@teams.on_invoke("composeExtension/...")` for invoke types not yet covered by a typed decorator. Day-1 support for new Teams features. |
+| `03_curated_invokes.py` | Typed sugar: message extensions, task modules, adaptive card actions. |
 
-Run order if you were turning this into a real PR:
-1. Add `core/extension.py`, `core/extension_registry.py` (already in this branch).
-2. Wire the three call sites in `channel_service_adapter.py` and
-   `app/proactive/proactive.py` per `core/_diffs.py`.
-3. Add `AgentApplication.use(...)` per `core/_diffs.py`.
-4. Flesh out `teams_channel_adapter.py`, `teams_deep_extension.py`,
-   `teams_context.py` (skeletons in this branch).
-5. These four examples become end-to-end tests.
+## Architecture
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│  microsoft-agents-hosting-teams  (everything Teams-specific)   │
+│                                                                │
+│  ┌──────────────────────┐    ┌───────────────────────────┐     │
+│  │ TeamsMiddleware      │    │ TeamsHandlers             │     │
+│  │ (plumbing)           │    │ (surface)                 │     │
+│  │                      │    │                           │     │
+│  │ on_turn()            │    │ on_invoke(name)           │     │
+│  │  • swap connector    │    │ on_activity(predicate)    │     │
+│  │  • attach helpers    │    │ message_extension_query() │     │
+│  │  • parse channelData │    │ task_module_fetch()       │     │
+│  │  • register          │    │ task_module_submit()      │     │
+│  │    ctx.on_send_      │    │ adaptive_card_action_     │     │
+│  │      activities()    │    │   execute()               │     │
+│  └──────────────────────┘    │ sign_in_verify_state()    │     │
+│                              └───────────────────────────┘     │
+│                                                                │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ install_teams(app)  → app.adapter.use(TeamsMiddleware()) │  │
+│  └──────────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────────┘
+                              │
+                              │ uses (no changes required)
+                              ▼
+┌────────────────────────────────────────────────────────────────┐
+│  microsoft-agents-hosting-core  (UNCHANGED)                    │
+│                                                                │
+│  • adapter.use(middleware)                                     │
+│  • ctx.on_send_activities(handler)                             │
+│  • app.add_route(selector, handler, is_invoke=True, rank=...)  │
+└────────────────────────────────────────────────────────────────┘
+```
+
+## Why this design
+
+| Requirement | How it's met |
+| --- | --- |
+| Zero core changes | Uses `adapter.use()`, `ctx.on_send_activities()`, `app.add_route()` — all public APIs that exist today. |
+| Teams team owns the surface | All code lives in `microsoft-agents-hosting-teams`. |
+| Independent release cadence | Teams package ships without touching core. |
+| Day-1 support for new invokes | Escape hatch (`on_invoke(name)`) works for any unknown invoke. |
+| LCM chat unaffected | Middleware filters on `channel_id == "msteams"`; routes select on the same. |
+| Proactive / continue_conversation covered | All flows go through `run_pipeline` — the middleware runs on each. |

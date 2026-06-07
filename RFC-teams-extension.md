@@ -1,146 +1,181 @@
-# Teams Extension in `microsoft/Agents-for-python` — Companion RFC
+# RFC: Teams Extension for the M365 Agents SDK (Python)
 
-> Author: Lily Du · 2026-06-05
-> Status: Draft
-> Companion to: [aamir-architecture-diagrams.md](https://github.com/rajan-chari/fellow-scholars/blob/main/RFC/agent_sdk_interop/aamir-architecture-diagrams.md)
+**Author:** Teams SDK Team
+**Status:** Draft
+**Repo:** `microsoft/Agents-for-python`
+**Sample code:** `test_samples/teams_extension_rfc/`
 
-## Why this exists
-
-The Teams SDK team needs to own the rich Teams interaction surface inside the
-Agents SDK without forking it. Aamir's RFC proposes the right shape; this doc
-locks down the contract, fills two gaps, and provides a working skeleton.
+---
 
 ## TL;DR
 
-Adopt Aamir's two-axis split (ChannelAdapter for plumbing, DeepExtension for
-surface) and his progressive-adoption phases. Add three things he doesn't cover:
+Teams support for the M365 Agents SDK for Python ships as a **standalone
+middleware + decorator surface** in `microsoft-agents-hosting-teams`, with
+**zero changes to `microsoft-agents-hosting-core`**.
 
-1. **Decorator cadence** — escape-hatch decorators (`on_invoke(name)`,
-   `on_activity(filter)`) so devs are never blocked when Teams ships a new
-   activity type. Curated typed decorators are sugar on top.
-2. **Versioning contract** — `name / version / requires_core` on every
-   extension; enforced at `app.use(...)`.
-3. **Owner-tagged routes / ExtensionRegistry** — explicit ownership of routes
-   and channels rather than fragile priority numbers across extensions.
+The Teams team owns the entire Teams developer experience — plumbing,
+invokes, mentions, cards, notifications, sign-in — from inside the Teams
+package only.
 
-No code is moved out of core. Channel-agnostic concerns (Authorization,
-Proactive, RestChannelServiceClientFactory) stay in core. The Teams Extension
-**registers into** those existing systems at `initialize()`.
+---
 
-## The contract (8 methods total)
+## Goals (recap)
 
-```python
-class ChannelAdapter(Protocol):
-    name: str; version: str; requires_core: str
-    def owns_channel(self, channel_id: str) -> bool: ...
-    async def on_context_created(self, ctx: TurnContext) -> None: ...
-    async def on_activity_sending(self, ctx, activity) -> Activity: ...
+1. Teams SDK team owns the rich Teams interaction surface in any SDK.
+2. Teams SDK team owns the client that connects to Teams.
+3. Rich Teams experience must not be compromised by lowest-common-denominator
+   chat features (and vice versa).
+4. Devs can move between standalone Teams SDK and Agents SDK with the same
+   API.
+5. Teams SDK team owns release cadence for the Teams Extension.
+6. Frictionless to build and deploy Teams agents using any SDK.
 
-class DeepExtension(Protocol):
-    name: str; version: str; requires_core: str
-    def owns_channel(self, channel_id: str) -> bool: ...
-    def can_handle(self, ctx: TurnContext) -> bool: ...
-    async def handle(self, ctx: TurnContext) -> None: ...
-```
+## Non-goals (this RFC)
 
-A package can ship one, the other, or both. `app.use(...)` accepts either.
+* Replacing the existing `AgentApplication` programming model.
+* Adding new extension points to `microsoft-agents-hosting-core`.
+* Building a formal "Extension Protocol" abstraction in core.
+* Supporting third-party channel teams in v1 — the pattern below is
+  copy-able for them, but no formal contract is shipped.
 
-## What changes in core (small, additive)
+---
 
-Three additions, zero removals:
+## Design
 
-1. **`core/extension.py`** — the two Protocols + an `Extension` bundle.
-2. **`core/extension_registry.py`** — `register_*`, `channel_adapter_for`,
-   `deep_extension_for`.
-3. **Three new call sites** in existing core files (annotated in
-   `src/microsoft_agents/hosting/core/_diffs.py`):
-   - `CloudAdapter.process()` — call `adapter.on_context_created(ctx)` after
-     TurnContext is built.
-   - `CloudAdapter.send_activities()` (or equivalent) — call
-     `adapter.on_activity_sending(ctx, act)` before egress.
-   - `Proactive.continue_conversation()` — call `on_context_created` after
-     building the proactive TurnContext.
+### Two components, both in `microsoft-agents-hosting-teams`
 
-`RestChannelServiceClientFactory` is **unchanged**. The Teams ChannelAdapter
-swaps the connector client on the TurnContext in `on_context_created`. Core's
-default factory still produces the generic client.
+1. **`TeamsMiddleware`** — *plumbing*. One instance, registered on the
+   adapter. Runs on every turn (reactive, proactive, continue-conversation
+   — all flows go through `ChannelServiceAdapter.run_pipeline`). Filters
+   internally on `channel_id == "msteams"`.
 
-## What we adopt from Aamir
+   Inbound work (replaces the would-be `on_context_created`):
+   * Swap the `ConnectorClient` for `TeamsConnectorClient`.
+   * Attach Teams helpers (`TeamsInfo`, parsed channelData).
 
-- Two-axis split (plumbing vs surface).
-- `on_activity_sending` outbound hook (we missed this; it's important for
-  mentions, channelData, card transforms).
-- Single `applyChannelAdapter` semantics invoked from both reactive and
-  proactive entry points.
-- Progressive adoption phases 1 → 4 (see `examples/`).
+   Outbound work (replaces the would-be `on_activity_sending`):
+   * Registers a callback with the existing
+     `TurnContext.on_send_activities(handler)` API.
+   * Injects notification metadata.
+   * Rewrites mentions into Teams `<at>` form.
+   * Transforms Adaptive Cards for Teams quirks.
 
-## Where we differ from Aamir
+2. **`TeamsHandlers`** — *surface*. Thin wrapper around the existing
+   `AgentApplication.add_route(selector, handler, is_invoke=True, rank)`
+   API. Two layers:
 
-| Concern | Aamir | This RFC |
-|---|---|---|
-| "Teams wins" mechanism | Route priorities (0/1/3) | Owner-tagged routes via `ExtensionRegistry`; priorities still allowed within an owner |
-| Decorator cadence | Not addressed | Escape hatch + curated sugar |
-| Versioning | Not addressed | `requires_core` SemVer at registration |
-| Multiple channel extensions | Implicit (Teams-only diagrams) | `ExtensionRegistry` resolves Slack/Outlook/Teams co-existence |
+   * **Layer 1 — escape hatch.** `on_invoke(name)`, `on_activity(predicate)`.
+     Works day-1 for any new Teams invoke type, without an SDK release.
+   * **Layer 2 — curated sugar.** Typed, ergonomic decorators for the common
+     invoke types: `message_extension_query`, `task_module_fetch`,
+     `task_module_submit`, `adaptive_card_action_execute`,
+     `sign_in_verify_state`, …
 
-## Rich Teams handler surface — decorator strategy
+### Developer experience
 
 ```python
-# Layer 1 — escape hatch, NEVER lags Teams releases
-@teams.on_invoke("composeExtension/queryNewThing")
-async def h(ctx, payload):  # payload = raw dict
-    return result
+from microsoft_agents.hosting.core import AgentApplication
+from microsoft_agents.hosting.teams import install_teams, TeamsHandlers
 
-@teams.on_activity(lambda a: a.type == "messageUpdate"
-                          and (a.channel_data or {}).get("eventType") == "editMessage")
-async def edited(ctx):
-    ...
+app = AgentApplication()
+install_teams(app)                  # plumbing
+teams = TeamsHandlers(app)          # surface
 
-# Layer 2 — curated typed sugar (one line per typed wrapper)
-@teams.message_extension.on_query
-async def search(ctx, query: MessagingExtensionQuery):
-    ...
+@app.message("hello")
+async def hello(ctx, state):
+    await ctx.send_activity("Hi there!")   # Teams-correct on the wire
+
+@teams.message_extension_query("search")
+async def search(ctx, query):
+    return MessagingExtensionResponse(...)
 ```
 
-Adding a new typed wrapper is one line in a manifest. Adding support for a new
-Teams invoke type **is not required** to use it — Layer 1 always works.
+### What we lean on in core (already exists)
 
-## Phases (see `examples/`)
+| API | Used for |
+| --- | --- |
+| `CloudAdapter.use(middleware)` | Registers `TeamsMiddleware` so it runs on every turn (all entry points). |
+| `Middleware.on_turn` | Inbound enrichment hook. |
+| `TurnContext.on_send_activities(handler)` | Outbound transform hook. Already part of `TurnContext`, lines 293-300. |
+| `AgentApplication.add_route(selector, handler, is_invoke=True, rank, auth_handlers)` | Route registration. Already part of `AgentApplication`, line 248. |
+| `RouteRank` | Invokes ranked higher than messages — already enforced by the dispatcher. |
+| `turn_state["BotFrameworkAdapter.InvokeResponse"]` | How handlers return typed invoke bodies — existing convention. |
 
-| Phase | File | What you wrote |
-|---|---|---|
-| 1 — Agents SDK only | `examples/phase1_basic.py` | `@app.on_message` |
-| 2 — + Plumbing | `examples/phase2_plumbing.py` | `app.use(TeamsChannelAdapter(...))` |
-| 3 — + Deep surface | `examples/phase3_deep.py` | `app.use(TeamsDeepExtension(...))` + Teams decorators |
-| 4 — + Override | `examples/phase4_override.py` | `@teams.on_message` (Teams handles text on Teams channel only) |
+---
+
+## Why not formalise `ChannelAdapter` / `DeepExtension` Protocols in core?
+
+An earlier draft of this RFC proposed adding two Protocols and a registry
+to core. We rejected that approach for v1:
+
+* **Scope creep into a package the Teams team doesn't own.** Even a 30-line
+  change to core needs core-team review, regression testing, and release
+  coordination.
+* **YAGNI.** Today there is one extension (Teams). The cost-benefit only
+  flips when a second channel team needs the same pattern.
+* **The existing primitives already do everything we need.**
+  `Middleware.on_turn` + `TurnContext.on_send_activities` + `add_route`
+  cover plumbing, outbound transforms, and routing respectively.
+
+When a second channel team needs the same shape, the existing
+`TeamsMiddleware` + `TeamsHandlers` pattern is the spec. Promoting it to a
+formal Protocol/registry in core becomes a mechanical refactor, not a
+ground-up design.
+
+---
+
+## What this design *cannot* do (and why that's OK)
+
+| Limitation | Mitigation |
+| --- | --- |
+| No `requires_core` SemVer enforcement at startup. | The Teams package pins a core version in its `pyproject.toml` as usual. Mismatch surfaces at `pip install` time. |
+| No introspection of "what extensions are loaded". | Middleware list on the adapter is the answer. Diagnostics tooling can read it. |
+| No structural Protocol for other channel teams to conform to. | They copy the `TeamsMiddleware` shape; the pattern is documented in this RFC and in the package README. |
+| `Middleware.on_turn` runs on every turn even on non-Teams channels. | Single `if channel_id == "msteams"` short-circuit. Cost: one branch per turn. |
+
+---
+
+## Migration
+
+There is no migration for end-users. New code looks like the sample.
+Existing Teams code using `TeamsActivityHandler` continues to work; that
+class is unaffected by this RFC.
+
+---
 
 ## Open questions
 
-1. **TeamsContext drift.** `TeamsContext.send(...)` and `ctx.send_activity(...)`
-   must both funnel through `on_activity_sending`. Verify in implementation.
-2. **Cross-extension precedence.** When Slack + Teams DeepExtensions both
-   register, registry returns by channel_id — but what if an activity has no
-   channel_id? Define a deterministic tiebreak (registration order is fine).
-3. **Phase-4 override semantics.** Replace vs additive when
-   `teams.on_message` is registered? **Recommendation: replace** — that's what
-   "override" means and what users expect.
-4. **Auth ownership.** Authorization stays in core; Teams-specific
-   `AuthHandler`s (e.g., Teams SSO) are *registered* by the extension via
-   `host.authorization.register_handler(...)`. Confirm scope.
+1. **Where does the `TeamsConnectorClient` get its credentials?** The
+   middleware needs access to whatever the adapter used to build the
+   default connector. Either expose a credentials provider on the adapter,
+   or read it off the existing client and reuse.
 
-## Implementation checklist (smallest credible first PR)
+2. **Auth handler integration.** `add_route` accepts `auth_handlers`. The
+   curated decorators forward them. Does that satisfy the goal of "SSO/OAuth
+   lives in the extension", or do we need a Teams-specific auth handler
+   registration helper?
 
-- [ ] `core/extension.py` — protocols
-- [ ] `core/extension_registry.py` — registry
-- [ ] `AgentApplication.use(extension)` — register helper
-- [ ] Three call sites: `process()`, `send_activities()`,
-      `continue_conversation()`
-- [ ] `TeamsChannelAdapter` — implements `ChannelAdapter`
-- [ ] `TeamsDeepExtension` — wraps existing `TeamsAgentExtension`'s decorators,
-      adds `on_invoke` / `on_activity` escape hatch
-- [ ] `TeamsContext` — bridge from TurnContext (start with `{send, stream,
-      graph, signin}`; expand over time)
-- [ ] Example apps for phases 1–4
-- [ ] One end-to-end test per phase
+3. **Streaming.** Teams has size-chunking requirements for streaming
+   responses. Does this belong in `TeamsMiddleware._on_send_activities`,
+   or as a separate streaming-specific decorator?
 
-That's ~7 files for a real PR. Skeleton in `src/` and `examples/`.
+4. **Drift risk.** If a developer ever sends activities through a path that
+   bypasses `TurnContext.send_activity` (e.g. calling the connector client
+   directly), the outbound transforms are skipped. Document this as a known
+   limitation and a code-review smell.
+
+---
+
+## Implementation checklist
+
+- [ ] `teams_middleware.py` — fill in `_swap_connector_client`,
+      `_format_mentions`, `_transform_card`.
+- [ ] `teams_handlers.py` — add typed payload models
+      (`MessagingExtensionQuery`, `TaskModuleRequest`, …) once exported by
+      `microsoft-agents-activity` or local to the package.
+- [ ] Unit tests: middleware no-ops on non-Teams channels; outbound
+      transforms run; invoke decorators select correctly.
+- [ ] Integration test: full reactive + proactive + invoke roundtrip in a
+      Teams-emulator harness.
+- [ ] Migration note in package README for users of the legacy
+      `TeamsAgentExtension`.
