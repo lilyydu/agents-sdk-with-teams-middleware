@@ -7,6 +7,14 @@ from .teams_agent_extension import (
 )
 from .teams_info import TeamsInfo
 
+# RFC: Teams SDK integration (embeds the teams.py App via middleware)
+from .teams_sdk import (
+    TeamsSDKMiddleware,
+    agent_turn_context,
+    make_agent_sdk_token_provider,
+    use_teams_sdk,
+)
+
 __all__ = [
     "TeamsActivityHandler",
     "TeamsAgentExtension",
@@ -14,4 +22,9 @@ __all__ = [
     "TaskModule",
     "Meeting",
     "TeamsInfo",
+    # Teams SDK integration
+    "TeamsSDKMiddleware",
+    "agent_turn_context",
+    "make_agent_sdk_token_provider",
+    "use_teams_sdk",
 ]
