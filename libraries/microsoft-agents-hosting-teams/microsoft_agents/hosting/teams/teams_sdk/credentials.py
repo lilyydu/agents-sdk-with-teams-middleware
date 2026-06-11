@@ -8,12 +8,22 @@ teams.py's ``App`` constructor accepts a ``token`` callable of shape
 provider; this module produces the callback so developers don't have to
 duplicate token logic.
 
-Tenant awareness:
+Connection-aware:
     When invoked inside a turn handled by ``TeamsSDKMiddleware``, the
     callback reads the inbound ``ClaimsIdentity`` from
     ``turn_state[AGENT_IDENTITY_KEY]`` and asks the connection manager
-    for the tenant-scoped provider via
-    ``get_token_provider(claims_identity, service_url)``.
+    for the matching connection via
+    ``get_token_provider(claims_identity, service_url)``. This matters
+    when more than one connection is registered (e.g. different app
+    registrations per channel or skill audience); with a single
+    connection it returns the same provider as
+    ``get_default_connection()``.
+
+    Note: this does NOT swap tenants per user. Outbound Bot Framework
+    Service tokens are always acquired against the bot's home tenant
+    configured on the connection itself; the inbound identity only
+    selects WHICH connection to use, not the tenant inside that
+    connection.
 
     Outside a turn (proactive callbacks, background tasks, startup hooks)
     the ContextVar is unset and we fall back to ``get_default_connection()``.
@@ -47,14 +57,15 @@ def make_agent_sdk_token_provider(
 
     Returns:
         An async callable matching teams.py's ``TokenCredentials.token``
-        signature. Tenant-aware when invoked inside a turn handled by
-        ``TeamsSDKMiddleware``; falls back to the default connection for
-        proactive / background calls.
+        signature. Connection-aware (picks among multiple registered
+        connections when applicable) when invoked inside a turn handled
+        by ``TeamsSDKMiddleware``; falls back to the default connection
+        for proactive / background calls.
     """
 
     async def _token(
         scope: Union[str, list[str]],
-        tenant_id: Optional[str] = None,  # noqa: ARG001 — tenant flows via ClaimsIdentity
+        tenant_id: Optional[str] = None,  # noqa: ARG001 — connection routing flows via ClaimsIdentity
     ) -> str:
         scopes = [scope] if isinstance(scope, str) else list(scope)
         # Strip ".default" off the first scope to derive the resource_url
@@ -73,13 +84,18 @@ def make_agent_sdk_token_provider(
 
 def _select_provider(connection_manager: Any, service_url: str) -> Any:
     """
-    Pick a tenant-scoped provider when a turn is in scope, else default.
+    Pick the matching connection when a turn is in scope, else default.
 
     Looks up the inbound ClaimsIdentity from the current turn's
     ``turn_state[AGENT_IDENTITY_KEY]``. If anything is missing — no turn
     in scope, no identity stashed, or the connection manager rejects the
     lookup — fall back to the default connection. That fallback is the
     only path used by proactive sends and non-turn callers.
+
+    NOTE: This does NOT perform per-user-tenant token acquisition. The
+    chosen connection's own tenant_id is always used for the outbound
+    token. This call only matters when more than one connection is
+    registered.
     """
     context = _agent_sdk_turn_context.get(None)
     if context is None:
@@ -97,7 +113,7 @@ def _select_provider(connection_manager: Any, service_url: str) -> Any:
         return connection_manager.get_token_provider(claims_identity, target_url)
     except Exception as exc:  # noqa: BLE001 — degrade gracefully on lookup failure
         logger.debug(
-            "tenant-scoped token provider lookup failed (%s); using default connection",
+            "connection lookup failed (%s); using default connection",
             exc,
         )
         return connection_manager.get_default_connection()
