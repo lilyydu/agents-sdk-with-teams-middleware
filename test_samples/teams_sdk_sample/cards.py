@@ -37,15 +37,15 @@ def help_card() -> AdaptiveCard:
                 ]
             ),
             TextBlock(
-                text="Agents SDK fallthrough handlers (AGENT_APP)",
+                text="Agents SDK fallthrough handlers (AGENT_SDK_APP)",
                 weight="Bolder",
                 spacing="Medium",
             ),
             FactSet(
                 facts=[
-                    Fact(title="agents react", value="Reach teams.py's API client from an Agents SDK handler"),
-                    Fact(title="agents proactive", value="Trigger a proactive send from an Agents SDK handler"),
-                    Fact(title="agents citation", value="Build a Teams citation activity from an Agents SDK handler"),
+                    Fact(title="agents sdk react", value="Reach teams.py's API client from an Agents SDK handler"),
+                    Fact(title="agents sdk proactive", value="Trigger a proactive send from an Agents SDK handler"),
+                    Fact(title="agents sdk citation", value="Build a Teams citation activity from an Agents SDK handler"),
                     Fact(title="anything else", value="Echo via Agents SDK '[Agent SDK] You said: ...'"),
                 ]
             ),

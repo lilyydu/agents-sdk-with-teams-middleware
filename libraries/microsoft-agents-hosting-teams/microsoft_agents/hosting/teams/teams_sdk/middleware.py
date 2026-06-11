@@ -28,7 +28,7 @@ from microsoft_teams.api import ActivityTypeAdapter
 from microsoft_teams.apps import App
 from microsoft_teams.apps.events.types import ActivityEvent
 
-from ._context import _agent_turn_context
+from ._context import _agent_sdk_turn_context
 from ._token import _TeamsSDKToken
 
 TEAMS_CHANNEL_ID = "msteams"
@@ -66,13 +66,13 @@ class TeamsSDKMiddleware(Middleware):
             token=_TeamsSDKToken.from_activity(context.activity),
         )
 
-        ctx_token = _agent_turn_context.set(context)
+        ctx_token = _agent_sdk_turn_context.set(context)
         try:
             invoke_response = await self._teams_app.activity_processor.process_activity(
                 plugins=[], event=event
             )
         finally:
-            _agent_turn_context.reset(ctx_token)
+            _agent_sdk_turn_context.reset(ctx_token)
 
         if context.activity.type == ActivityTypes.invoke:
             await self._propagate_invoke_response(context, invoke_response)

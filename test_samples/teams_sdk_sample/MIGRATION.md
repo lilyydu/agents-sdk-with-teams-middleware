@@ -11,7 +11,7 @@ The Agents SDK historically shipped a Teams "extension" in `microsoft-agents-hos
 ```python
 from microsoft_agents.hosting.teams import TeamsAgentExtension
 
-teams = TeamsAgentExtension(agent_app)
+teams = TeamsAgentExtension(agent_sdk_app)
 
 @teams.task_module.on_fetch("openForm")
 async def fetch(context, state, request):
@@ -25,7 +25,7 @@ The **new** approach replaces `TeamsAgentExtension` with a thin **bridge middlew
 ```python
 from microsoft_agents.hosting.teams import use_teams_sdk
 
-TEAMS_APP = use_teams_sdk(AGENT_APP, CONNECTION_MANAGER)
+TEAMS_APP = use_teams_sdk(AGENT_SDK_APP, CONNECTION_MANAGER)
 
 @TEAMS_APP.on_message_pattern("task")
 async def task(ctx):
@@ -56,13 +56,13 @@ Net effect: Teams developers get the full Teams SDK feature set; Agents SDK deve
 
 ### What is the middleware and how it works
 
-`TeamsSDKMiddleware` is a regular Agents SDK [`Middleware`](https://learn.microsoft.com/en-us/microsoftteams/platform/) installed on `AGENT_APP.adapter`. Every turn passes through it; for **Teams turns** it acts as a router, for **other channels** it is a pure pass-through.
+`TeamsSDKMiddleware` is a regular Agents SDK [`Middleware`](https://learn.microsoft.com/en-us/microsoftteams/platform/) installed on `AGENT_SDK_APP.adapter`. Every turn passes through it; for **Teams turns** it acts as a router, for **other channels** it is a pure pass-through.
 
 ```
 inbound HTTP /api/messages
         │
         ▼
-CloudAdapter ── AGENT_APP.adapter.use(TeamsSDKMiddleware)
+CloudAdapter ── AGENT_SDK_APP.adapter.use(TeamsSDKMiddleware)
         │
         ├─ channel != "msteams"  ───────────► AgentApplication handlers (unchanged)
         │
@@ -173,8 +173,8 @@ Replace the old extension wiring with a single call to `use_teams_sdk` *after* y
 from microsoft_agents.hosting.core import AgentApplication
 from microsoft_agents.hosting.teams import TeamsAgentExtension
 
-AGENT_APP = AgentApplication[TurnState](options=...)
-teams = TeamsAgentExtension(AGENT_APP)
+AGENT_SDK_APP = AgentApplication[TurnState](options=...)
+teams = TeamsAgentExtension(AGENT_SDK_APP)
 
 @teams.message_extension.on_query("search")
 async def search(context, state, query): ...
@@ -189,8 +189,8 @@ async def fetch(context, state, request): ...
 from microsoft_agents.hosting.core import AgentApplication
 from microsoft_agents.hosting.teams import use_teams_sdk
 
-AGENT_APP = AgentApplication[TurnState](options=...)
-TEAMS_APP = use_teams_sdk(AGENT_APP, CONNECTION_MANAGER)
+AGENT_SDK_APP = AgentApplication[TurnState](options=...)
+TEAMS_APP = use_teams_sdk(AGENT_SDK_APP, CONNECTION_MANAGER)
 
 @TEAMS_APP.on_message_ext_query
 async def search(ctx): ...
@@ -203,9 +203,9 @@ async def fetch(ctx): ...
 
 1. **Extracts credentials** from `CONNECTION_MANAGER.get_default_connection_configuration()` — the same `CLIENT_ID` / `TENANT_ID` your Agents SDK app is already configured with.
 2. **Bridges the token provider** — outbound calls from the Teams SDK use the Agents SDK's `MsalConnectionManager`, so you don't double-configure auth.
-3. **Installs `TeamsSDKMiddleware`** on `AGENT_APP.adapter`.
+3. **Installs `TeamsSDKMiddleware`** on `AGENT_SDK_APP.adapter`.
 
-Everything else — your `ApplicationOptions`, `CloudAdapter`, storage, `@AGENT_APP.error`, `@AGENT_APP.message`, your auth handlers, your aiohttp app — stays exactly as it is. The Agents SDK is still your hosting layer.
+Everything else — your `ApplicationOptions`, `CloudAdapter`, storage, `@AGENT_SDK_APP.error`, `@AGENT_SDK_APP.message`, your auth handlers, your aiohttp app — stays exactly as it is. The Agents SDK is still your hosting layer.
 
 ---
 
@@ -269,7 +269,7 @@ The response shapes also changed — see the [Task module response shape](#task-
 | `on_config_submit` | `on_config_submit` | `ConfigSubmitInvokeActivity` |
 | `on_file_consent_accept` | `on_file_consent` (filter on `ctx.activity.value.action == "accept"`) | `FileConsentInvokeActivity` |
 | `on_file_consent_decline` | `on_file_consent` (filter `... == "decline"`) | same |
-| `on_o365_connector_card_action` | *not exposed in Teams SDK* — use `@TEAMS_APP.on_invoke` with predicate, or fall through to `AGENT_APP` | |
+| `on_o365_connector_card_action` | *not exposed in Teams SDK* — use `@TEAMS_APP.on_invoke` with predicate, or fall through to `AGENT_SDK_APP` | |
 | `on_members_added` / `on_members_removed` | `on_conversation_update` (check `ctx.activity.members_added` / `members_removed`); `on_install_add` / `on_install_remove` for the bot itself | `ConversationUpdateActivity` |
 | `on_channel_created` / `on_channel_deleted` / `on_channel_renamed` / `on_channel_restored` | same names | `ConversationUpdateActivity` |
 | `on_team_archived` / `on_team_deleted` / `on_team_hard_deleted` / `on_team_renamed` / `on_team_restored` / `on_team_unarchived` | same names | `ConversationUpdateActivity` |
@@ -326,23 +326,23 @@ The `task=` field on `TaskModuleInvokeResponse` (not `value=`) is the common pit
 A single Teams turn now has **two contexts** in scope:
 
 * **`ctx: ActivityContext[T]`** — the teams.py context, passed to every `@TEAMS_APP.*` handler. Carries the typed activity, an `ApiClient` scoped to the inbound `service_url`, and helpers like `ctx.send`, `ctx.reply`, `ctx.stream`, `ctx.api`.
-* **`TurnContext`** — the Agents SDK context. Owns auth state, `turn_state`, send hooks (`on_send_activities`), and is what every `@AGENT_APP.*` handler receives directly.
+* **`TurnContext`** — the Agents SDK context. Owns auth state, `turn_state`, send hooks (`on_send_activities`), and is what every `@AGENT_SDK_APP.*` handler receives directly.
 
 For most code you only need one of these and you'll use whichever is passed to your handler. If you're inside a `@TEAMS_APP.*` handler and need the Agents SDK side (e.g. to read auth state or register a send hook):
 
 ```python
-from microsoft_agents.hosting.teams import agent_turn_context
+from microsoft_agents.hosting.teams import agent_sdk_turn_context
 
 @TEAMS_APP.on_message_pattern("ping")
 async def ping(ctx):
-    agent_ctx = agent_turn_context()    # the Agents SDK TurnContext
-    user_token = agent_ctx.turn_state.get("AccessToken")
+    agent_sdk_ctx = agent_sdk_turn_context()    # the Agents SDK TurnContext
+    user_token = agent_sdk_ctx.turn_state.get("AccessToken")
     await ctx.send("pong")
 ```
 
-`agent_turn_context()` is backed by a `ContextVar` that the middleware sets for the duration of the teams.py handler. Calling it outside a Teams turn raises `LookupError`.
+`agent_sdk_turn_context()` is backed by a `ContextVar` that the middleware sets for the duration of the teams.py handler. Calling it outside a Teams turn raises `LookupError`.
 
-Going the other direction — from an `@AGENT_APP.*` handler to teams.py functionality — see [Proactive flows](#proactive-flows).
+Going the other direction — from an `@AGENT_SDK_APP.*` handler to teams.py functionality — see [Proactive flows](#proactive-flows).
 
 ### Proactive flows
 
@@ -364,15 +364,15 @@ async def schedule(ctx):
 
 `TEAMS_APP.send` uses the API client constructed by `use_teams_sdk` — already wired to the Agents SDK's token provider.
 
-#### From an `@AGENT_APP.*` handler — build a per-turn `ApiClient`
+#### From an `@AGENT_SDK_APP.*` handler — build a per-turn `ApiClient`
 
-`TEAMS_APP.api` is pinned to a single `service_url` at App construction time. Inbound activities through the Agents SDK can arrive with a *different* `service_url` (e.g. `canary.botapi.skype.com/amer/...` vs `smba.trafficmanager.net/teams/`). Calling `TEAMS_APP.send` from an `@AGENT_APP.*` handler would route to the wrong region. The fix is a per-turn `ApiClient` against `context.activity.service_url`, reusing the shared HTTP client (and therefore its token provider):
+`TEAMS_APP.api` is pinned to a single `service_url` at App construction time. Inbound activities through the Agents SDK can arrive with a *different* `service_url` (e.g. `canary.botapi.skype.com/amer/...` vs `smba.trafficmanager.net/teams/`). Calling `TEAMS_APP.send` from an `@AGENT_SDK_APP.*` handler would route to the wrong region. The fix is a per-turn `ApiClient` against `context.activity.service_url`, reusing the shared HTTP client (and therefore its token provider):
 
 ```python
 from microsoft_teams.api.clients.api_client import ApiClient
 from microsoft_teams.api import MessageActivityInput
 
-@AGENT_APP.message("agents proactive")
+@AGENT_SDK_APP.message("agents sdk proactive")
 async def proactive(context: TurnContext, _state: TurnState):
     conv_id = context.activity.conversation.id
     api = ApiClient(
@@ -384,7 +384,7 @@ async def proactive(context: TurnContext, _state: TurnState):
     )
 ```
 
-This pattern also unlocks the full `api.reactions`, `api.meetings.*`, etc. surface from inside `@AGENT_APP.*` handlers.
+This pattern also unlocks the full `api.reactions`, `api.meetings.*`, etc. surface from inside `@AGENT_SDK_APP.*` handlers.
 
 > **Auto-typing note.** `ApplicationOptions.start_typing_timer` defaults to `True`. When you send via teams.py's `ApiClient` directly (bypassing `context.send_activity`), the Agents SDK's typing-stop hook never fires for that send. The actual message arrives correctly, but you may see a brief residual typing indicator. Set `start_typing_timer=False` if that matters.
 
@@ -408,8 +408,8 @@ TeamsSDKMiddleware.on_turn
         │     │              └─ invoke responses propagated to Agents SDK send pipeline
         │     │
         │     └─ unmatched → await logic()
-        │                    └─ AGENT_APP handlers run as usual
-        │                        (e.g. @AGENT_APP.message("agents proactive"))
+        │                    └─ AGENT_SDK_APP handlers run as usual
+        │                        (e.g. @AGENT_SDK_APP.message("agents sdk proactive"))
         ▼
 turn complete
 ```
@@ -417,7 +417,7 @@ turn complete
 What this means for handler design:
 
 * **Default to writing Teams-aware handlers on `TEAMS_APP`** — you get the typed activity, the rich builders, and the full Teams API.
-* **Use `AGENT_APP` handlers for cross-channel or pure-Agents SDK behavior** — text patterns that should work on Teams, Webchat, and Slack alike; auth flows; OAuth callbacks.
+* **Use `AGENT_SDK_APP` handlers for cross-channel or pure-Agents SDK behavior** — text patterns that should work on Teams, Webchat, and Slack alike; auth flows; OAuth callbacks.
 * **Order doesn't matter.** Both handler sets are registered at startup; the middleware picks the right one per turn.
 
 The bridge does not change anything about non-Teams turns. If `channel_id != "msteams"`, `TeamsSDKMiddleware.on_turn` calls `logic()` immediately and your `AgentApplication` runs untouched. Use this to support Teams + other channels from a single `AgentApplication` without conditional code paths.

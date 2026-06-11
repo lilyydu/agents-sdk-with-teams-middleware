@@ -27,7 +27,7 @@ from typing import Any, Awaitable, Callable, Optional, Union
 
 from microsoft_agents.hosting.core.channel_adapter import ChannelAdapter
 
-from ._context import _agent_turn_context
+from ._context import _agent_sdk_turn_context
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ def _select_provider(connection_manager: Any, service_url: str) -> Any:
     lookup — fall back to the default connection. That fallback is the
     only path used by proactive sends and non-turn callers.
     """
-    context = _agent_turn_context.get(None)
+    context = _agent_sdk_turn_context.get(None)
     if context is None:
         return connection_manager.get_default_connection()
 

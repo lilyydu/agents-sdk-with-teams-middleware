@@ -24,7 +24,7 @@ from microsoft_agents.hosting.core import (
 from microsoft_agents.hosting.core.app import ApplicationOptions
 
 from microsoft_agents.hosting.teams import (
-    agent_turn_context,
+    agent_sdk_turn_context,
     use_teams_sdk,
 )
 
@@ -68,12 +68,12 @@ CONNECTION_MANAGER = MsalConnectionManager(**agents_sdk_config)
 ADAPTER = CloudAdapter(connection_manager=CONNECTION_MANAGER)
 
 # ─── Agents SDK side ──────────────────────────────────────────────
-AGENT_APP = AgentApplication[TurnState](
+AGENT_SDK_APP = AgentApplication[TurnState](
     options=ApplicationOptions(storage=STORAGE, adapter=ADAPTER),
 )
 
 
-@AGENT_APP.error
+@AGENT_SDK_APP.error
 async def _on_error(context: TurnContext, error: Exception):
     log.exception("Unhandled error: %s", error)
     await context.send_activity(f"⚠️ {type(error).__name__}: {error}")
@@ -82,8 +82,8 @@ async def _on_error(context: TurnContext, error: Exception):
 # ─── teams.py side ────────────────────────────────────────────────
 # One call: extracts credentials from CONNECTION_MANAGER, wires teams.py's
 # outbound token callback to it, constructs the App, and installs
-# TeamsSDKMiddleware on AGENT_APP.adapter so Teams turns are short-circuited.
-TEAMS_APP = use_teams_sdk(AGENT_APP, CONNECTION_MANAGER)
+# TeamsSDKMiddleware on AGENT_SDK_APP.adapter so Teams turns are short-circuited.
+TEAMS_APP = use_teams_sdk(AGENT_SDK_APP, CONNECTION_MANAGER)
 
 
 # ════════════════════ TEAMS_APP — Teams SDK feature showcase ════════════════════
@@ -185,13 +185,13 @@ async def _task(ctx: ActivityContext[MessageActivity]):
 async def _turn_context(ctx: ActivityContext[MessageActivity]):
     """Send via Teams SDK *and* Agents SDK from the same teams.py handler.
 
-    ``agent_turn_context()`` returns the live Agents SDK ``TurnContext`` that
+    ``agent_sdk_turn_context()`` returns the live Agents SDK ``TurnContext`` that
     ``TeamsSDKMiddleware`` built for this turn, so this handler can call into
     the Agents SDK outbound pipeline (and read/write ``turn_state``) without
     spinning up a second context."""
-    agent_ctx = agent_turn_context()
+    agent_sdk_ctx = agent_sdk_turn_context()
     await ctx.send("[Teams SDK] Sending via teams.py ActivityContext…")
-    await agent_ctx.send_activity(
+    await agent_sdk_ctx.send_activity(
         "[Agent SDK] Sending via Agents SDK TurnContext "
         "from inside a teams.py handler."
     )
@@ -275,12 +275,12 @@ async def _on_meeting_end(ctx: ActivityContext[MeetingEndEventActivity]):
     await ctx.send("[Teams SDK] Meeting has ended!")
 
 
-# ════════════════════ AGENT_APP — fallthrough + "agents *" commands ════════════════════
+# ════════════════════ AGENT_SDK_APP — fallthrough + "agents sdk *" commands ════════════════════
 # These fire for Teams activities that have no matching teams.py route (TeamsSDKMiddleware
 # falls through) and for any non-Teams channel.
 
-@AGENT_APP.conversation_update("membersAdded")
-async def _agent_welcome(context: TurnContext, _state: TurnState):
+@AGENT_SDK_APP.conversation_update("membersAdded")
+async def _agent_sdk_welcome(context: TurnContext, _state: TurnState):
     """Welcome from the Agents SDK side. Note: when TEAMS_APP also has an
     on_conversation_update handler that matches, the middleware short-circuits
     to teams.py and this handler never runs for Teams turns. It's still useful
@@ -293,8 +293,8 @@ async def _agent_welcome(context: TurnContext, _state: TurnState):
         )
 
 
-@AGENT_APP.message("agents react")
-async def _agents_react(context: TurnContext, _state: TurnState):
+@AGENT_SDK_APP.message("agents sdk react")
+async def _agents_sdk_react(context: TurnContext, _state: TurnState):
     """Reach into teams.py's API client from an Agents SDK handler.
 
     ``TEAMS_APP.api`` is pinned to the service URL provided at App construction,
@@ -311,11 +311,11 @@ async def _agents_react(context: TurnContext, _state: TurnState):
         await asyncio.sleep(2)
         await api.reactions.delete(conv_id, response.id, "like")
     except Exception:
-        log.exception("agents react: reactions API call failed")
+        log.exception("agents sdk react: reactions API call failed")
 
 
-@AGENT_APP.message("agents proactive")
-async def _agents_proactive(context: TurnContext, _state: TurnState):
+@AGENT_SDK_APP.message("agents sdk proactive")
+async def _agents_sdk_proactive(context: TurnContext, _state: TurnState):
     """Send a proactive-style message via teams.py's API client.
 
     ``TEAMS_APP.api`` is pinned to the service URL provided at App construction,
@@ -331,8 +331,8 @@ async def _agents_proactive(context: TurnContext, _state: TurnState):
     )
 
 
-@AGENT_APP.message("agents citation")
-async def _agents_citation(context: TurnContext, _state: TurnState):
+@AGENT_SDK_APP.message("agents sdk citation")
+async def _agents_sdk_citation(context: TurnContext, _state: TurnState):
     """Build a Teams citation activity in Agents SDK code, send via teams.py.
 
     Uses a per-turn ``ApiClient`` so the send targets the inbound service URL."""
@@ -361,10 +361,10 @@ async def _agents_citation(context: TurnContext, _state: TurnState):
     await api.conversations.activities(conv_id).create(teams_message)
 
 
-@AGENT_APP.activity("message")
+@AGENT_SDK_APP.activity("message")
 async def _echo(context: TurnContext, _state: TurnState):
     """Default echo fallthrough. Fires when no teams.py route matches and
-    none of the ``agents *`` commands above matched either."""
+    none of the ``agents sdk *`` commands above matched either."""
     text = (context.activity.text or "").strip()
     await context.send_activity(f"[Agent SDK] You said: {text}")
 
@@ -372,13 +372,13 @@ async def _echo(context: TurnContext, _state: TurnState):
 # ─────────────────────────── HTTP wiring ───────────────────────────
 
 async def _entry_point(req: web.Request) -> web.Response:
-    return await start_agent_process(req, req.app["agent_app"], req.app["adapter"])
+    return await start_agent_process(req, req.app["agent_sdk_app"], req.app["adapter"])
 
 
 if __name__ == "__main__":
     APP = web.Application(middlewares=[jwt_authorization_middleware])
     APP.router.add_post("/api/messages", _entry_point)
-    APP["agent_app"] = AGENT_APP
+    APP["agent_sdk_app"] = AGENT_SDK_APP
     APP["adapter"] = ADAPTER
     APP["agent_configuration"] = CONNECTION_MANAGER.get_default_connection_configuration()
 
