@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>net8.0</TargetFramework>
+		<LangVersion>latest</LangVersion>
+		<ImplicitUsings>disable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<RootNamespace>TeamsSdk</RootNamespace>
+	</PropertyGroup>
+
+	<!--
+		The bridge uses ASP.NET Core abstractions (IHttpContextAccessor,
+		IServiceCollection, AddHttpClient), so it needs the shared framework
+		reference even though it is a class library, not a web app.
+	-->
+	<ItemGroup>
+		<FrameworkReference Include="Microsoft.AspNetCore.App" />
+	</ItemGroup>
+
+	<!--
+		Agents SDK from nuget.org (umbrella package brings Builder/Core/Authentication
+		transitively); Teams SDK from the TeamsSDKPreviews feed (see ../../nuget.config).
+	-->
+	<ItemGroup>
+		<PackageReference Include="Microsoft.Agents.Hosting.AspNetCore" Version="1.6.109-beta" />
+		<PackageReference Include="Microsoft.Teams.Apps" Version="2.1.0-preview-0042-g5b6c09d3e9" />
+	</ItemGroup>
+
+</Project>

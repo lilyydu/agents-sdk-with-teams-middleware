@@ -1,6 +1,0 @@
-microsoft-agents-activity
-microsoft-agents-hosting-aiohttp
-microsoft-agents-hosting-core
-microsoft-agents-authentication-msal
-aiohttp
-python-dotenv

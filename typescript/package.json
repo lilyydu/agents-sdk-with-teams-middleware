@@ -1,0 +1,21 @@
+{
+  "name": "agents-sdk-with-teams-middleware-typescript",
+  "private": true,
+  "version": "0.0.0",
+  "description": "TypeScript port of the Teams SDK middleware bridge for Microsoft Agents SDK.",
+  "workspaces": [
+    "libraries/*",
+    "test_samples/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  }
+}

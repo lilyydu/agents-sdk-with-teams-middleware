@@ -1,0 +1,23 @@
+{
+  "name": "teams-sdk-sample",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Live sample: AgentApplication with teams.ts mounted via TeamsSdkMiddleware.",
+  "type": "commonjs",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node --env-file=.env dist/index.js",
+    "dev": "tsc -p tsconfig.json && node --env-file=.env dist/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@microsoft/agents-activity": "^1.5.0",
+    "@microsoft/agents-hosting": "^1.5.0",
+    "@microsoft/agents-hosting-express": "^1.5.0",
+    "@microsoft/teams.api": "^2.0.0",
+    "@microsoft/teams.apps": "^2.0.0",
+    "teams-sdk-middleware": "*"
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "name": "teams-sdk-middleware",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Embed @microsoft/teams.apps inside an @microsoft/agents-hosting AgentApplication via middleware.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rimraf dist"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "@microsoft/agents-activity": "^1.5.0",
+    "@microsoft/agents-hosting": "^1.5.0",
+    "@microsoft/teams.api": "^2.0.0",
+    "@microsoft/teams.apps": "^2.0.0"
+  },
+  "devDependencies": {
+    "@microsoft/agents-activity": "^1.5.0",
+    "@microsoft/agents-hosting": "^1.5.0",
+    "@microsoft/teams.api": "^2.0.0",
+    "@microsoft/teams.apps": "^2.0.0"
+  }
+}

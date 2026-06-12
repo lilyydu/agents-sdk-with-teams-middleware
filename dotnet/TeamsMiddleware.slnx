@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/libraries/">
+    <Project Path="libraries/TeamsSdkMiddleware/TeamsSdkMiddleware.csproj" />
+  </Folder>
+  <Folder Name="/test_samples/">
+    <Project Path="test_samples/TeamsMiddlewareSample/TeamsMiddlewareSample.csproj" />
+  </Folder>
+</Solution>
