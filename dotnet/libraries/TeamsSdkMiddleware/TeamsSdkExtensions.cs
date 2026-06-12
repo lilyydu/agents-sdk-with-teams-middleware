@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+using System.Linq;
 using System.Net.Http;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
@@ -21,13 +22,19 @@ public static class TeamsSdkExtensions
     private const string HttpClientName = "TeamsBot";
 
     /// <summary>
-    /// Registers a <see cref="TeamsBotApplication"/> subclass and its dependencies
-    /// (<see cref="ApiClient"/>, <see cref="ConversationClient"/>,
-    /// <see cref="UserTokenClient"/>) using a named <see cref="HttpClient"/> whose
-    /// outbound requests are authenticated by <see cref="AgentSdkAuthHandler"/>.
+    /// One-call setup for embedding the Teams SDK in an Agents SDK app. Registers:
+    /// <list type="bullet">
+    /// <item>the <see cref="TeamsBotApplication"/> subclass <typeparamref name="T"/> and its
+    /// dependencies (<see cref="ApiClient"/>, <see cref="ConversationClient"/>,
+    /// <see cref="UserTokenClient"/>) on a named <see cref="HttpClient"/> whose outbound
+    /// requests are authenticated by <see cref="AgentSdkAuthHandler"/> (Agents SDK auth);</item>
+    /// <item><see cref="TeamsSdkMiddleware"/> on the <c>CloudAdapter</c> pipeline so Teams turns
+    /// are routed to the Teams SDK and everything else falls through to the Agents SDK.</item>
+    /// </list>
+    /// This is the only call needed — see <c>Program.cs</c>.
     /// </summary>
     /// <typeparam name="T">A <see cref="TeamsBotApplication"/> subclass.</typeparam>
-    public static IServiceCollection AddTeamsSdkWithAgentAuth<T>(this IServiceCollection services)
+    public static IServiceCollection AddTeamsSdk<T>(this IServiceCollection services)
         where T : TeamsBotApplication
     {
         services.AddHttpContextAccessor();
@@ -69,6 +76,15 @@ public static class TeamsSdkExtensions
         // depends on TeamsBotApplication rather than any concrete subclass — resolves
         // the same singleton instance.
         services.AddSingleton<TeamsBotApplication>(sp => sp.GetRequiredService<T>());
+
+        // Install the routing middleware: register the bridge as an Agents SDK
+        // IMiddleware, plus the IMiddleware[] the CloudAdapter consumes (DI doesn't
+        // resolve array types). The array factory resolves lazily, so it still
+        // includes any other IMiddleware the app registers. Fully qualified because
+        // Microsoft.AspNetCore.Http also defines an IMiddleware.
+        services.AddSingleton<Microsoft.Agents.Builder.IMiddleware, TeamsSdkMiddleware>();
+        services.AddSingleton<Microsoft.Agents.Builder.IMiddleware[]>(
+            sp => sp.GetServices<Microsoft.Agents.Builder.IMiddleware>().ToArray());
 
         return services;
     }

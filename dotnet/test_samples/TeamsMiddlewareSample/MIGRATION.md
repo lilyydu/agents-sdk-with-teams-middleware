@@ -32,8 +32,7 @@ The **new** approach replaces the `TeamsActivityHandler` subclass with a thin **
 ```csharp
 // Program.cs
 builder.AddAgent<MyAgent>();
-builder.Services.AddTeamsSdkWithAgentAuth<MyTeamsBot>();
-builder.Services.AddSingleton<IMiddleware, TeamsSdkMiddleware>();
+builder.Services.AddTeamsSdk<MyTeamsBot>();   // bot + Teams API/auth chain + routing middleware
 ```
 
 ```csharp
@@ -196,13 +195,9 @@ builder.AddAgent<MyAgent>();                                   // your AgentAppl
 builder.Services.AddSingleton<IStorage, MemoryStorage>();
 builder.Services.AddAgentAspNetAuthentication(builder.Configuration);
 
-// Teams SDK, reusing Agent SDK auth (see TeamsSdkExtensions.cs / AgentSdkAuthHandler.cs)
-builder.Services.AddTeamsSdkWithAgentAuth<MyTeamsBot>();
-
-// Routing middleware. CloudAdapter's constructor takes IMiddleware[]; .NET DI does not
-// auto-resolve array types, so register the array explicitly after the individual entries.
-builder.Services.AddSingleton<IMiddleware, TeamsSdkMiddleware>();
-builder.Services.AddSingleton<IMiddleware[]>(sp => sp.GetServices<IMiddleware>().ToArray());
+// Teams SDK in one call: bot + Teams API/auth chain (see TeamsSdkExtensions.cs /
+// AgentSdkAuthHandler.cs) + the routing middleware on the CloudAdapter pipeline.
+builder.Services.AddTeamsSdk<MyTeamsBot>();
 ```
 
 ```csharp
@@ -218,11 +213,12 @@ public class MyTeamsBot : TeamsBotApplication
 }
 ```
 
-`AddTeamsSdkWithAgentAuth<T>()` (in `TeamsSdkExtensions.cs`) does the wiring:
+`AddTeamsSdk<T>()` (in `TeamsSdkExtensions.cs`) does the wiring:
 
 1. **Reuses Agent SDK auth.** It registers an `AgentSdkAuthHandler` (a `DelegatingHandler`) on a named `HttpClient`, so outbound Teams SDK calls acquire Bearer tokens via the Agent SDK's `IConnections` / `IAccessTokenProvider` — the same `clientId` / `tenantId` your Agents SDK app is already configured with. No separate `AzureAd` config section.
 2. **Builds the Teams SDK clients** (`ConversationClient`, `UserTokenClient`, `ApiClient`) on top of that authenticated `HttpClient`.
-3. **Registers your `TeamsBotApplication` subclass** as a singleton so the middleware can resolve it.
+3. **Registers your `TeamsBotApplication` subclass** as a singleton (and under the base `TeamsBotApplication` type) so the middleware can resolve it.
+4. **Installs the routing middleware.** It registers `TeamsSdkMiddleware` as an Agents SDK `IMiddleware` and the `IMiddleware[]` the `CloudAdapter` consumes — so you don't wire the pipeline by hand.
 
 Everything else — your `AgentApplicationOptions`, `CloudAdapter`, storage, error handlers, message handlers, auth handlers, ASP.NET host — stays exactly as it is. The Agents SDK is still your hosting layer.
 
@@ -385,7 +381,7 @@ this.OnMessage("proactive", async (context, ct) =>
 });
 ```
 
-`SendAsync` uses the `ApiClient` constructed by `AddTeamsSdkWithAgentAuth` — already wired to the Agent SDK's token provider.
+`SendAsync` uses the `ApiClient` constructed by `AddTeamsSdk` — already wired to the Agent SDK's token provider.
 
 #### From an `AgentApplication` handler — scope an `ApiClient` to the inbound service URL
 
@@ -445,4 +441,4 @@ The bridge does not change anything about non-Teams turns. If `ChannelId != Chan
 
 * **This sample:** the files referenced throughout — `Program.cs` (wiring), `TeamsSdkExtensions.cs` (DI + auth bridge), `AgentSdkAuthHandler.cs` (token bridge), `TeamsSdkMiddleware.cs` (the router), `MyTeamsBot.cs` (Teams SDK handlers), `MyAgent.cs` (Agent SDK handlers using Teams SDK services). `COMMANDS.md` lists the demo commands.
 * **Teams SDK reference:** the standalone Teams SDK lives at `microsoft/teams.net`; every `On*` registration method is defined under `src/Microsoft.Teams.Apps/Handlers/`.
-* **TypeScript counterpart:** this guide mirrors the teams.ts `useTeamsSdk` migration guide; the concepts map 1:1, with `TeamsSdkMiddleware` standing in for `TeamsSdkMiddleware`, `AddTeamsSdkWithAgentAuth<T>()` for `useTeamsSdk(...)`, and `TeamsSdkMiddleware.CurrentTurnContext` for `agentSdkTurnContext()`.
+* **TypeScript counterpart:** this guide mirrors the teams.ts `useTeamsSdk` migration guide; the concepts map 1:1 — `TeamsSdkMiddleware` is the shared name across both, `AddTeamsSdk<T>()` corresponds to `useTeamsSdk(...)`, and `TeamsSdkMiddleware.CurrentTurnContext` to `agentSdkTurnContext()`.

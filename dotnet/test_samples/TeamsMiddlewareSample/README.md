@@ -3,7 +3,7 @@
 ## Wiring
 
 ```csharp
-using TeamsSdkMiddleware;
+using TeamsSdk;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -11,15 +11,11 @@ builder.AddAgent<MyAgent>();
 builder.Services.AddSingleton<IStorage, MemoryStorage>();
 builder.Services.AddAgentAspNetAuthentication(builder.Configuration);
 
-// One call: registers MyTeamsBot (a TeamsBotApplication) plus its Teams SDK service
-// chain (ApiClient / ConversationClient / UserTokenClient) on a named HttpClient whose
-// outbound calls are authenticated via the Agent SDK's IConnections (AgentSdkAuthHandler).
-builder.Services.AddTeamsSdkWithAgentAuth<MyTeamsBot>();
-
-// Install the routing middleware on the CloudAdapter pipeline. (DI doesn't resolve
-// array types, so register IMiddleware[] explicitly after all IMiddleware entries.)
-builder.Services.AddSingleton<IMiddleware, TeamsSdkMiddleware>();
-builder.Services.AddSingleton<IMiddleware[]>(sp => sp.GetServices<IMiddleware>().ToArray());
+// One call: registers MyTeamsBot + its Teams SDK service chain (ApiClient /
+// ConversationClient / UserTokenClient) on a named HttpClient authed via the Agent
+// SDK's IConnections (AgentSdkAuthHandler), and installs the routing middleware on
+// the CloudAdapter pipeline.
+builder.Services.AddTeamsSdk<MyTeamsBot>();
 
 var app = builder.Build();
 app.MapAgentApplicationEndpoints(requireAuth: !app.Environment.IsDevelopment());
@@ -34,12 +30,13 @@ this.OnMessage("help", async (context, ct) => await context.SendAsync(/* card */
 OnActivity(ActivityTypes.Message, OnMessageAsync, rank: RouteRank.Last);   // echo fallthrough
 ```
 
-`AddTeamsSdkWithAgentAuth<MyTeamsBot>()` registers the Teams SDK bot and wires its
-outbound HTTP through `AgentSdkAuthHandler`, which acquires Bearer tokens from the
-Agent SDK's `IConnections` — so both SDKs share one bot registration and credential
-set (`Connections` in `appsettings.json`). It also registers the bot under its base
-`TeamsBotApplication` type so `TeamsSdkMiddleware` resolves it without coupling
-to the concrete subclass.
+`AddTeamsSdk<MyTeamsBot>()` is the only call you need. It registers the Teams SDK bot
+and wires its outbound HTTP through `AgentSdkAuthHandler`, which acquires Bearer tokens
+from the Agent SDK's `IConnections` — so both SDKs share one bot registration and
+credential set (`Connections` in `appsettings.json`). It also registers the bot under
+its base `TeamsBotApplication` type and installs `TeamsSdkMiddleware` (plus the
+`IMiddleware[]` the `CloudAdapter` consumes) so Teams turns are routed without you
+wiring up the pipeline by hand.
 
 For every `msteams` turn the middleware checks whether `MyTeamsBot` has a matching
 route; if so it hands the activity to the Teams SDK and, for `invoke` activities,
@@ -85,7 +82,7 @@ flow through the Agent SDK exactly as in a native `AgentApplication` turn. Use
 │         non-invoke turns: OnActivity                             │
 │         return (do NOT call next())                              │
 │                                                                  │
-│  AddTeamsSdkWithAgentAuth<T>(services)                           │
+│  AddTeamsSdk<T>(services)                           │
 │    → registers T + its Teams SDK ApiClient chain on an           │
 │      HttpClient whose outbound auth is AgentSdkAuthHandler       │
 │      (bridges IConnections → Bearer tokens); registers the bot   │

@@ -53,7 +53,7 @@ shared camelCase wire shape).
 - **Install helper** — one call that extracts `client_id`/`tenant_id` from the
   connection manager, wires the Teams SDK's outbound token callback to it,
   constructs the Teams app, and registers the middleware. `use_teams_sdk` (py),
-  `useTeamsSdk` (ts), `AddTeamsSdkWithAgentAuth` / `TeamsSdkExtensions` (.NET).
+  `useTeamsSdk` (ts), `AddTeamsSdk` / `TeamsSdkExtensions` (.NET).
 - **Turn-context accessor** — `agent_sdk_turn_context()` (py),
   `agentSdkTurnContext` (ts), `TeamsSdkMiddleware.CurrentTurnContext` /
   `RequireTurnContext()` (.NET).
@@ -131,7 +131,7 @@ to the `dotnet/` tree so it covers both projects without touching the repo root.
 No Central Package Management / `Directory.Build.props` — each csproj is self-contained.
 
 The middleware is decoupled from the sample: it depends on the base
-`Microsoft.Teams.Apps.TeamsBotApplication`, and `AddTeamsSdkWithAgentAuth<T>`
+`Microsoft.Teams.Apps.TeamsBotApplication`, and `AddTeamsSdk<T>`
 registers the bot under that base type so the middleware resolves it regardless of
 the concrete subclass. The library needs `<FrameworkReference Include="Microsoft.AspNetCore.App" />`
 (it uses `IHttpContextAccessor` / DI extensions).
