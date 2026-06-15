@@ -19,7 +19,7 @@ Each language tree has the same `libraries/` (the reusable bridge) + `test_sampl
 
 | | Library (bridge) | Sample |
 |---|---|---|
-| **python/** | `libraries/microsoft-agents-hosting-teams` (`teams_sdk`) | `test_samples/teams_sdk_sample` |
+| **python/** | `libraries/teams_sdk` | `test_samples/teams_sdk_sample` |
 | **typescript/** | `libraries/teams-sdk-middleware` | `test_samples/teams-sdk-sample` |
 | **dotnet/** | `libraries/TeamsSdkMiddleware` | `test_samples/TeamsMiddlewareSample` |
 
