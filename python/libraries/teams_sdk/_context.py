@@ -5,7 +5,7 @@ from contextvars import ContextVar
 from microsoft_agents.hosting.core.turn_context import TurnContext
 
 _agent_sdk_turn_context: ContextVar[TurnContext] = ContextVar(
-    "microsoft_agents.hosting.teams.teams_sdk.agent_sdk_turn_context"
+    "teams_sdk.agent_sdk_turn_context"
 )
 
 

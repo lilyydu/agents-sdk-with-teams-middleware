@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "teams-sdk"
+version = "0.1.0"
+description = "Bridge middleware that embeds the standalone Teams SDK inside an Agents SDK AgentApplication."
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Microsoft" }]
+dependencies = [
+    "microsoft-agents-activity",
+    "microsoft-agents-hosting-core",
+    "microsoft-teams-api",
+    "microsoft-teams-apps",
+]
+
+[tool.setuptools]
+packages = ["teams_sdk"]
+package-dir = { "teams_sdk" = "." }

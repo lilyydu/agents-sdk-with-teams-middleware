@@ -1,0 +1,13 @@
+# Public Agents SDK + Teams SDK packages
+aiohttp
+python-dotenv
+microsoft-agents-activity
+microsoft-agents-hosting-core
+microsoft-agents-hosting-aiohttp
+microsoft-agents-authentication-msal
+microsoft-teams-api
+microsoft-teams-apps
+
+# Local bridge (this repo). Editable install so changes under
+# ../../libraries/teams_sdk are picked up without reinstalling.
+-e ../../libraries/teams_sdk

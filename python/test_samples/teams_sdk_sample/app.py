@@ -23,7 +23,7 @@ from microsoft_agents.hosting.core import (
 )
 from microsoft_agents.hosting.core.app import ApplicationOptions
 
-from microsoft_agents.hosting.teams import (
+from teams_sdk import (
     agent_sdk_turn_context,
     use_teams_sdk,
 )

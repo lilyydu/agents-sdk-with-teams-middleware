@@ -17,9 +17,11 @@ All three now follow the same `libraries/` (the reusable extension) + `test_samp
 (a runnable sample that references it) split:
 
 ```
+```
 python/      libraries/teams_sdk                       +  test_samples/teams_sdk_sample
 typescript/  libraries/teams-sdk-middleware            +  test_samples/teams-sdk-sample   (npm workspaces)
 dotnet/      libraries/TeamsSdkMiddleware              +  test_samples/TeamsMiddlewareSample  (TeamsMiddleware.slnx)
+```
 ```
 
 ## The core file: the middleware
@@ -85,20 +87,13 @@ Deps are public npm: `@microsoft/agents-*`, `@microsoft/teams.*`.
 ### Python
 ```bash
 cd python/test_samples/teams_sdk_sample
-python -m venv .venv
-.venv/Scripts/python.exe -m pip install \
-  aiohttp python-dotenv \
-  microsoft-agents-activity microsoft-agents-hosting-core \
-  microsoft-agents-hosting-aiohttp microsoft-agents-authentication-msal \
-  microsoft-teams-apps microsoft-teams-api          # all on public PyPI
-# Put the local teams library on the path WITHOUT pip-installing it: its setup.py
-# pins microsoft-agents-hosting-core==<pkgver> (0.0.0 fallback) which won't resolve.
-# microsoft_agents is a PEP 420 namespace package, so a .pth pointing at the lib
-# root lets `microsoft_agents.hosting.teams` load from source while the rest of
-# microsoft_agents.* resolves from site-packages:
-echo "<abs>\python\libraries\microsoft-agents-hosting-teams" > .venv/Lib/site-packages/teams_local_lib.pth
-python app.py            # reads .env; see env-var shape below
+py -3.12 -m venv .venv                              # Python 3.10+ required
+.venv/Scripts/python.exe -m pip install -U pip
+.venv/Scripts/python.exe -m pip install -r requirements.txt   # public PyPI deps + editable local teams_sdk
+.venv/Scripts/python.exe app.py                     # reads .env; see env-var shape below
 ```
+`requirements.txt` editable-installs `../../libraries/teams_sdk` (which has its own
+`pyproject.toml`), so edits to the bridge are picked up without reinstalling.
 The Agents SDK reads nested config from env vars split on `__`. The sample needs a
 `CONNECTIONS.SERVICE_CONNECTION` config — minimal `.env`:
 ```

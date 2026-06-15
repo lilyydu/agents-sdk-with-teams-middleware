@@ -3,7 +3,7 @@
 ## Wiring
 
 ```python
-from microsoft_agents.hosting.teams import use_teams_sdk, agent_sdk_turn_context
+from teams_sdk import use_teams_sdk, agent_sdk_turn_context
 
 AGENT_SDK_APP = AgentApplication(...)
 TEAMS_APP = use_teams_sdk(AGENT_SDK_APP, CONNECTION_MANAGER)
@@ -32,7 +32,7 @@ turn falls through to `AGENT_SDK_APP`'s handlers.
 ## Reaching the Agents SDK `TurnContext` from a teams.py handler
 
 ```python
-from microsoft_agents.hosting.teams import agent_sdk_turn_context
+from teams_sdk import agent_sdk_turn_context
 
 @TEAMS_APP.on_message_pattern("turn context")
 async def _turn_ctx(ctx):
@@ -52,7 +52,7 @@ ContextVar is unset and the helper raises `LookupError`.
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│  microsoft-agents-hosting-teams/teams_sdk/                       │
+│  python/libraries/teams_sdk/                                     │
 │                                                                  │
 │  TeamsSDKMiddleware                                              │
 │   • non-Teams channel:    → await next() (Agents SDK)            │
@@ -91,8 +91,25 @@ ContextVar is unset and the helper raises `LookupError`.
 
 ## Running
 
-1. Create a bot registration (Teams CLI: `teams app create --name "..." --endpoint https://your-tunnel.devtunnels.ms/api/messages --json`).
-2. Drop the credentials in `.env` next to `app.py` (`CLIENT_ID`, `CLIENT_SECRET`, `TENANT_ID`).
-3. Start a dev tunnel pointing at `http://localhost:3978`.
-4. `python app.py` (with the repo's venv activated).
-5. Install the bot in Teams and send `help`.
+1. **Python 3.10+** — older versions won't work. On Windows, `py -3.12 --version` should report 3.12.x (or any 3.10+).
+2. Create a venv inside this folder and install deps (this also editable-installs the local `teams_sdk` bridge):
+   ```bash
+   cd python/test_samples/teams_sdk_sample
+   py -3.12 -m venv .venv                              # or `python3.12 -m venv .venv` on macOS/Linux
+   .venv\Scripts\python -m pip install -U pip          # `.venv/bin/python` on macOS/Linux
+   .venv\Scripts\python -m pip install -r requirements.txt
+   ```
+3. Drop the bot credentials in `.env` next to `app.py`:
+   ```
+   CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID=<guid>
+   CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET=<secret>
+   CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID=<guid>
+   TOKENVALIDATION__ENABLED=false                      # optional; skip JWT validation for local dev
+   PORT=3978
+   ```
+4. Start a dev tunnel pointing at `http://localhost:3978` and register/update a bot at `https://<tunnel>/api/messages` (e.g. `teams app create --name "..." --endpoint https://<tunnel>/api/messages --json`).
+5. Run the bot:
+   ```bash
+   .venv\Scripts\python app.py
+   ```
+6. Install the bot in Teams and send `help` — replies are prefixed `[Teams SDK]` (Teams SDK route) or `[Agent SDK]` (fallthrough to `AgentApplication`).

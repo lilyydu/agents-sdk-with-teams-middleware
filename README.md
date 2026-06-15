@@ -32,5 +32,5 @@ approach.
 
 Quick pointers:
 - **TypeScript:** `cd typescript && npm install && npm run build`
-- **Python:** `cd python/test_samples/teams_sdk_sample` (see AGENTS.md for venv + deps)
+- **Python:** `cd python/test_samples/teams_sdk_sample && py -3.12 -m venv .venv && .venv\Scripts\python -m pip install -r requirements.txt` (Python 3.10+; see sample README for full steps)
 - **.NET:** `cd dotnet && dotnet build TeamsMiddleware.slnx`

@@ -23,7 +23,7 @@ That surface covers Teams *invoke* shapes, but stops there. Things outside of pu
 The **new** approach replaces `TeamsAgentExtension` with a thin **bridge middleware** that lets you embed a full `microsoft_teams.apps.App` (the standalone Teams SDK) alongside your `AgentApplication`. You keep the Agents SDK as your hosting front door for non-Teams channels; for Teams turns, the bridge hands the activity to the Teams SDK so you get the full Teams SDK developer experience — typed activities, builders, an `ApiClient` with the full Teams surface, and rich routing — without giving up your existing `AgentApplication` handlers, auth, or storage.
 
 ```python
-from microsoft_agents.hosting.teams import use_teams_sdk
+from teams_sdk import use_teams_sdk
 
 TEAMS_APP = use_teams_sdk(AGENT_SDK_APP, CONNECTION_MANAGER)
 
@@ -187,7 +187,7 @@ async def fetch(context, state, request): ...
 
 ```python
 from microsoft_agents.hosting.core import AgentApplication
-from microsoft_agents.hosting.teams import use_teams_sdk
+from teams_sdk import use_teams_sdk
 
 AGENT_SDK_APP = AgentApplication[TurnState](options=...)
 TEAMS_APP = use_teams_sdk(AGENT_SDK_APP, CONNECTION_MANAGER)
@@ -331,7 +331,7 @@ A single Teams turn now has **two contexts** in scope:
 For most code you only need one of these and you'll use whichever is passed to your handler. If you're inside a `@TEAMS_APP.*` handler and need the Agents SDK side (e.g. to read auth state or register a send hook):
 
 ```python
-from microsoft_agents.hosting.teams import agent_sdk_turn_context
+from teams_sdk import agent_sdk_turn_context
 
 @TEAMS_APP.on_message_pattern("ping")
 async def ping(ctx):
@@ -428,4 +428,4 @@ The bridge does not change anything about non-Teams turns. If `channel_id != "ms
 
 * **Sample:** [`test_samples/teams_sdk_sample/`](./) — exercises every reactive / proactive / invoke surface across both halves.
 * **Teams SDK reference:** the standalone Teams SDK lives at [`microsoft/teams.py`](https://github.com/microsoft/teams.py); every `@TEAMS_APP.*` decorator is documented there.
-* **Bridge source:** [`libraries/microsoft-agents-hosting-teams/microsoft_agents/hosting/teams/teams_sdk/`](../../libraries/microsoft-agents-hosting-teams/microsoft_agents/hosting/teams/teams_sdk/) — the middleware, install helper, token provider, and ContextVar wiring.
+* **Bridge source:** [`libraries/teams_sdk/`](../../libraries/teams_sdk/) — the middleware, install helper, token provider, and ContextVar wiring.
