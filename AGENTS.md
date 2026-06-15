@@ -17,7 +17,7 @@ All three now follow the same `libraries/` (the reusable extension) + `test_samp
 (a runnable sample that references it) split:
 
 ```
-python/      libraries/microsoft-agents-hosting-teams  +  test_samples/teams_sdk_sample
+python/      libraries/teams_sdk                       +  test_samples/teams_sdk_sample
 typescript/  libraries/teams-sdk-middleware            +  test_samples/teams-sdk-sample   (npm workspaces)
 dotnet/      libraries/TeamsSdkMiddleware              +  test_samples/TeamsMiddlewareSample  (TeamsMiddleware.slnx)
 ```
@@ -26,7 +26,7 @@ dotnet/      libraries/TeamsSdkMiddleware              +  test_samples/TeamsMidd
 
 The middleware is the heart of every prototype. Read it first:
 
-- `python/libraries/microsoft-agents-hosting-teams/microsoft_agents/hosting/teams/teams_sdk/middleware.py` — `TeamsSDKMiddleware`
+- `python/libraries/teams_sdk/middleware.py` — `TeamsSDKMiddleware`
 - `typescript/libraries/teams-sdk-middleware/src/middleware.ts` — `TeamsSdkMiddleware`
 - `dotnet/libraries/TeamsSdkMiddleware/TeamsSdkMiddleware.cs` — `TeamsSdkMiddleware`
 
