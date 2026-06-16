@@ -47,6 +47,7 @@ from microsoft_teams.api import (
     TaskSubmitInvokeActivity,
 )
 from microsoft_teams.api.clients.api_client import ApiClient
+from microsoft_teams.api.models.account import Account
 from microsoft_teams.api.models.attachment import AdaptiveCardAttachment, card_attachment
 from microsoft_teams.api.models.entity import CitationAppearance
 from microsoft_teams.api.models.entity.citation_entity import CitationUsageInfo
@@ -154,6 +155,17 @@ async def _react(ctx: ActivityContext[MessageActivity]):
 async def _quote(ctx: ActivityContext[MessageActivity]):
     """Reply to the user's message with a quoted reply (auto-quotes inbound)."""
     await ctx.reply("Quoting your message!")
+
+
+@TEAMS_APP.on_message_pattern("targeted")
+async def _targeted(ctx: ActivityContext[MessageActivity]):
+    """Send a targeted (ephemeral) message visible only to the sender."""
+    sender = ctx.activity.from_account
+    targeted_msg = (
+        MessageActivityInput(text="👁️ This message is only visible to you.")
+        .with_recipient(Account(id=sender.id, name=sender.name), is_targeted=True)
+    )
+    await ctx.send(targeted_msg)
 
 
 @TEAMS_APP.on_message_pattern("proactive")

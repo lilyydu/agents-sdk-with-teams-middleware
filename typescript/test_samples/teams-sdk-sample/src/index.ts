@@ -107,6 +107,14 @@ TEAMS_APP.message('quote', async ({ reply }) => {
   await reply('Quoting your message!');
 });
 
+TEAMS_APP.message('targeted', async ({ send, activity }) => {
+  // Send a targeted (ephemeral) message visible only to the sender.
+  const sender = activity.from;
+  const targeted = new MessageActivity('👁️ This message is only visible to you.')
+    .withRecipient({ id: sender.id, name: sender.name ?? '', role: 'user' }, true);
+  await send(targeted);
+});
+
 TEAMS_APP.message('proactive', async ({ send, activity }) => {
   const convId = activity.conversation.id;
   await send('Proactive message coming in ~3s…');
