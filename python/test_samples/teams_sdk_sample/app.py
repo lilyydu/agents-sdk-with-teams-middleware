@@ -315,21 +315,12 @@ async def _agent_sdk_welcome(context: TurnContext, _state: TurnState):
 
 @AGENT_SDK_APP.message("agents sdk react")
 async def _agents_sdk_react(context: TurnContext, _state: TurnState):
-    """Reach into teams.py's API client from an Agents SDK handler.
-
-    ``TEAMS_APP.api`` is pinned to the service URL provided at App construction,
-    so for handlers driven by the Agents SDK (whose activities may arrive on a
-    different service URL) we build a per-turn ``ApiClient`` against the inbound
-    ``context.activity.service_url`` while reusing the shared HTTP client."""
     response = await context.send_activity(
         "[Agent SDK] Adding then removing 👍 via teams.py API client…"
     )
     conv_id = context.activity.conversation.id
-    api = ApiClient(service_url=context.activity.service_url, options=TEAMS_APP.api.http)
     try:
-        await api.reactions.add(conv_id, response.id, "like")
-        await asyncio.sleep(2)
-        await api.reactions.delete(conv_id, response.id, "like")
+        await TEAMS_APP.api.reactions.add(conv_id, response.id, "like")
     except Exception:
         log.exception("agents sdk react: reactions API call failed")
 
