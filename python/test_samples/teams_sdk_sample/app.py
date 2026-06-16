@@ -3,6 +3,7 @@
 
 import asyncio
 import logging
+import re
 from os import environ, path
 
 from aiohttp import web
@@ -17,6 +18,7 @@ from microsoft_agents.hosting.aiohttp import (
 )
 from microsoft_agents.hosting.core import (
     AgentApplication,
+    ConversationState,
     MemoryStorage,
     TurnContext,
     TurnState,
@@ -65,6 +67,7 @@ load_dotenv(path.join(path.dirname(__file__), ".env"))
 agents_sdk_config = load_configuration_from_env(environ)
 
 STORAGE = MemoryStorage()
+CONVERSATION_STATE = ConversationState(STORAGE)
 CONNECTION_MANAGER = MsalConnectionManager(**agents_sdk_config)
 ADAPTER = CloudAdapter(connection_manager=CONNECTION_MANAGER)
 
@@ -157,10 +160,10 @@ async def _quote(ctx: ActivityContext[MessageActivity]):
     await ctx.reply("Quoting your message!")
 
 
-@TEAMS_APP.on_message_pattern("targeted")
+@TEAMS_APP.on_message_pattern(re.compile(r"(<at>.*?</at>\s*)?targeted", re.IGNORECASE))
 async def _targeted(ctx: ActivityContext[MessageActivity]):
     """Send a targeted (ephemeral) message visible only to the sender."""
-    sender = ctx.activity.from_account
+    sender = ctx.activity.from_
     targeted_msg = (
         MessageActivityInput(text="👁️ This message is only visible to you.")
         .with_recipient(Account(id=sender.id, name=sender.name), is_targeted=True)
@@ -195,17 +198,22 @@ async def _task(ctx: ActivityContext[MessageActivity]):
 
 @TEAMS_APP.on_message_pattern("turn context")
 async def _turn_context(ctx: ActivityContext[MessageActivity]):
-    """Send via Teams SDK *and* Agents SDK from the same teams.py handler.
+    """Use Agents SDK ConversationState from inside a Teams handler.
 
-    ``agent_sdk_turn_context()`` returns the live Agents SDK ``TurnContext`` that
-    ``TeamsSDKMiddleware`` built for this turn, so this handler can call into
-    the Agents SDK outbound pipeline (and read/write ``turn_state``) without
-    spinning up a second context."""
+    Demonstrates the key value prop: Teams handlers can tap into Agents SDK
+    infrastructure (state management, storage) without duplicating it."""
     agent_sdk_ctx = agent_sdk_turn_context()
-    await ctx.send("[Teams SDK] Sending via teams.py ActivityContext…")
-    await agent_sdk_ctx.send_activity(
-        "[Agent SDK] Sending via Agents SDK TurnContext "
-        "from inside a teams.py handler."
+
+    # Access Agents SDK conversation state from inside a Teams handler
+    state_accessor = CONVERSATION_STATE.create_property("message_count")
+    count = await state_accessor.get(agent_sdk_ctx, default_value_or_factory=0)
+    count += 1
+    await state_accessor.set(agent_sdk_ctx, count)
+    await CONVERSATION_STATE.save(agent_sdk_ctx)
+
+    await ctx.send(
+        f"📊 This conversation has received **{count}** message(s) "
+        f"(tracked via Agents SDK ConversationState from a Teams handler)."
     )
 
 

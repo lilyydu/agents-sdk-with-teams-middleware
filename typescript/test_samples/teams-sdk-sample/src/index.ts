@@ -11,6 +11,7 @@
 
 import {
   AgentApplication,
+  ConversationState,
   loadAuthConfigFromEnv,
   MemoryStorage,
   MsalConnectionManager,
@@ -37,8 +38,11 @@ const CONNECTION_MANAGER = new MsalConnectionManager(
   loadAuthConfigFromEnv()
 );
 
+const STORAGE = new MemoryStorage();
+const CONVERSATION_STATE = new ConversationState(STORAGE);
+
 const AGENT_SDK_APP = new AgentApplication<TurnState>({
-  storage: new MemoryStorage(),
+  storage: STORAGE,
 });
 
 AGENT_SDK_APP.onError(async (context, error) => {
@@ -130,14 +134,19 @@ TEAMS_APP.message('task', async ({ send }) => {
 });
 
 TEAMS_APP.message('turn context', async ({ send }) => {
-  // agentSdkTurnContext() returns the live Agents SDK TurnContext that
-  // TeamsSdkMiddleware built for this turn, so this handler can call into the
-  // Agents SDK outbound pipeline (and read/write turnState) without spinning
-  // up a second context.
+  // Use Agents SDK ConversationState from inside a Teams handler.
+  // Demonstrates the key value prop: Teams handlers can tap into Agents SDK
+  // infrastructure (state management, storage) without duplicating it.
   const agentSdkCtx = agentSdkTurnContext();
-  await send('[Teams SDK] Sending via teams.ts ActivityContext…');
-  await agentSdkCtx.sendActivity(
-    '[Agent SDK] Sending via Agents SDK TurnContext from inside a teams.ts handler.'
+  const accessor = CONVERSATION_STATE.createProperty<number>('messageCount');
+  await CONVERSATION_STATE.load(agentSdkCtx);
+  const count = ((await accessor.get(agentSdkCtx)) ?? 0) + 1;
+  await accessor.set(agentSdkCtx, count);
+  await CONVERSATION_STATE.saveChanges(agentSdkCtx);
+
+  await send(
+    `📊 This conversation has received **${count}** message(s) ` +
+    `(tracked via Agents SDK ConversationState from a Teams handler).`
   );
 });
 
