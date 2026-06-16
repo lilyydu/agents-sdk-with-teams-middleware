@@ -2,8 +2,10 @@
 // Licensed under the MIT License.
 
 #pragma warning disable ExperimentalTeamsQuotedReplies // Quote is experimental
+#pragma warning disable ExperimentalTeamsTargeted       // WithRecipient(targeted) is experimental
 
 using Microsoft.Agents.Builder;
+using Microsoft.Agents.Builder.State;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Teams.Apps;
@@ -13,6 +15,7 @@ using Microsoft.Teams.Apps.Handlers.MessageExtension;
 using Microsoft.Teams.Apps.Handlers.TaskModules;
 using Microsoft.Teams.Apps.Schema;
 using Microsoft.Teams.Apps.Schema.Entities;
+using Microsoft.Teams.Core.Schema;
 using TeamsSdk;
 using System;
 using System.Linq;
@@ -29,11 +32,13 @@ namespace TeamsMiddlewareSample;
 public class MyTeamsBot : TeamsBotApplication
 {
     private readonly ILogger<MyTeamsBot> _logger;
+    private readonly ConversationState _conversationState;
 
-    public MyTeamsBot(ApiClient api, IHttpContextAccessor accessor, ILogger<MyTeamsBot> logger, TeamsBotApplicationOptions? options = null)
+    public MyTeamsBot(ApiClient api, IHttpContextAccessor accessor, ILogger<MyTeamsBot> logger, ConversationState conversationState, TeamsBotApplicationOptions? options = null)
         : base(api, accessor, logger, options)
     {
         _logger = logger;
+        _conversationState = conversationState;
 
         // ── help ──────────────────────────────────────────────────────
         this.OnMessage("help", async (context, ct) =>
@@ -60,6 +65,7 @@ public class MyTeamsBot : TeamsBotApplication
                                 { "title": "stream", "value": "Streaming response with informative updates" },
                                 { "title": "react", "value": "Bot adds/removes emoji reactions" },
                                 { "title": "quote", "value": "Bot quotes its own message" },
+                                { "title": "targeted", "value": "Ephemeral message visible only to sender" },
                                 { "title": "proactive", "value": "Delayed proactive message" },
                                 { "title": "task", "value": "Task module fetch/submit flow" },
                                 { "title": "turn context", "value": "Use Agent SDK ITurnContext from Teams SDK handler" },
@@ -214,6 +220,15 @@ public class MyTeamsBot : TeamsBotApplication
             }
         });
 
+        // ── targeted ─────────────────────────────────────────────────
+        this.OnMessage("targeted", async (context, ct) =>
+        {
+            var sender = context.Activity.From;
+            var targeted = new MessageActivity("👁️ This message is only visible to you.")
+                .WithRecipient(new ConversationAccount { Id = sender!.Id, Name = sender.Name }, isTargeted: true);
+            await context.SendActivityAsync(targeted, ct);
+        });
+
         // ── proactive ─────────────────────────────────────────────────
         this.OnMessage("proactive", async (context, ct) =>
         {
@@ -270,9 +285,9 @@ public class MyTeamsBot : TeamsBotApplication
         });
 
         // ── turn context ──────────────────────────────────────────────
-        // Demonstrates accessing the Agent SDK ITurnContext from a Teams SDK
-        // handler.  The middleware stashes it in an AsyncLocal so it's available
-        // even on background threads (non-invoke activities).
+        // Use Agents SDK ConversationState from inside a Teams handler.
+        // Demonstrates the key value prop: Teams handlers can tap into Agents SDK
+        // infrastructure (state management, storage) without duplicating it.
         this.OnMessage("turn context", async (context, ct) =>
         {
             var agentCtx = TeamsSdkMiddleware.CurrentTurnContext;
@@ -282,20 +297,16 @@ public class MyTeamsBot : TeamsBotApplication
                 return;
             }
 
-            // Send one message through the Teams SDK pipeline
-            await context.SendAsync("[Teams SDK] Sending via Teams SDK context...", ct);
+            // Access Agents SDK conversation state from inside a Teams handler
+            await _conversationState.LoadAsync(agentCtx, cancellationToken: ct);
+            int count = _conversationState.GetValue<int>("messageCount", () => 0);
+            count++;
+            _conversationState.SetValue("messageCount", count);
+            await _conversationState.SaveChangesAsync(agentCtx, cancellationToken: ct);
 
-            // Send another message through the Agent SDK pipeline using the bridged ITurnContext
-            await agentCtx.SendActivityAsync(
-                Microsoft.Agents.Core.Models.MessageFactory.Text("[Agent SDK] Sending via Agent SDK turn context from inside a Teams SDK handler!"),
-                ct);
-
-            // Show turn metadata only available from the Agent SDK side
             await context.SendAsync(
-                $"[Teams SDK] Agent SDK turn info — " +
-                $"Activity.Id: {agentCtx.Activity.Id}, " +
-                $"ChannelId: {agentCtx.Activity.ChannelId}, " +
-                $"Locale: {agentCtx.Activity.Locale}", ct);
+                $"📊 This conversation has received **{count}** message(s) " +
+                "(tracked via Agents SDK ConversationState from a Teams handler).", ct);
         });
 
         // ── Adaptive Card Action handler ──────────────────────────────
