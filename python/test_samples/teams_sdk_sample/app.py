@@ -92,13 +92,13 @@ TEAMS_APP = use_teams_sdk(AGENT_SDK_APP, CONNECTION_MANAGER)
 
 # ════════════════════ TEAMS_APP — Teams SDK feature showcase ════════════════════
 
-@TEAMS_APP.on_message_pattern("help")
+@TEAMS_APP.on_message("help")
 async def _help(ctx: ActivityContext[MessageActivity]):
     """List the commands this sample understands."""
     await ctx.send(MessageActivityInput().add_card(help_card()))
 
 
-@TEAMS_APP.on_message_pattern("cards")
+@TEAMS_APP.on_message("cards")
 async def _cards(ctx: ActivityContext[MessageActivity]):
     """Send an Adaptive Card. Pressing the button fires an Action.Execute invoke
     routed to ``_on_card_action`` below; teams.py wraps the typed response in
@@ -107,7 +107,7 @@ async def _cards(ctx: ActivityContext[MessageActivity]):
     await ctx.send(MessageActivityInput().add_card(ping_card()))
 
 
-@TEAMS_APP.on_message_pattern("citation")
+@TEAMS_APP.on_message("citation")
 async def _citation(ctx: ActivityContext[MessageActivity]):
     """Send a message with a citation, sensitivity label, AI-generated label, and feedback affordance."""
     activity = (
@@ -131,7 +131,7 @@ async def _citation(ctx: ActivityContext[MessageActivity]):
     await ctx.send(activity)
 
 
-@TEAMS_APP.on_message_pattern("stream")
+@TEAMS_APP.on_message("stream")
 async def _stream(ctx: ActivityContext[MessageActivity]):
     """Streaming response: informative status update → chunked text → finalize."""
     ctx.stream.update("Thinking…")
@@ -141,7 +141,7 @@ async def _stream(ctx: ActivityContext[MessageActivity]):
     await ctx.stream.close()
 
 
-@TEAMS_APP.on_message_pattern("react")
+@TEAMS_APP.on_message("react")
 async def _react(ctx: ActivityContext[MessageActivity]):
     """Bot adds, then removes, an emoji reaction on its own message."""
     response = await ctx.send("React to this message! I'll add 👍 and remove it.")
@@ -154,13 +154,13 @@ async def _react(ctx: ActivityContext[MessageActivity]):
         log.exception("react: reactions API call failed")
 
 
-@TEAMS_APP.on_message_pattern("quote")
+@TEAMS_APP.on_message("quote")
 async def _quote(ctx: ActivityContext[MessageActivity]):
     """Reply to the user's message with a quoted reply (auto-quotes inbound)."""
     await ctx.reply("Quoting your message!")
 
 
-@TEAMS_APP.on_message_pattern(re.compile(r"(<at>.*?</at>\s*)?targeted", re.IGNORECASE))
+@TEAMS_APP.on_message("targeted")
 async def _targeted(ctx: ActivityContext[MessageActivity]):
     """Send a targeted (ephemeral) message visible only to the sender."""
     sender = ctx.activity.from_
@@ -171,7 +171,7 @@ async def _targeted(ctx: ActivityContext[MessageActivity]):
     await ctx.send(targeted_msg)
 
 
-@TEAMS_APP.on_message_pattern("proactive")
+@TEAMS_APP.on_message("proactive")
 async def _proactive(ctx: ActivityContext[MessageActivity]):
     """Fire-and-forget delayed proactive message."""
     conv_id = ctx.activity.conversation.id
@@ -190,13 +190,13 @@ async def _proactive(ctx: ActivityContext[MessageActivity]):
     asyncio.create_task(_later())
 
 
-@TEAMS_APP.on_message_pattern("task")
+@TEAMS_APP.on_message("task")
 async def _task(ctx: ActivityContext[MessageActivity]):
     """Send a card whose button opens a task module (task/fetch → task/submit)."""
     await ctx.send(MessageActivityInput().add_card(task_launcher_card()))
 
 
-@TEAMS_APP.on_message_pattern("turn context")
+@TEAMS_APP.on_message("turn context")
 async def _turn_context(ctx: ActivityContext[MessageActivity]):
     """Use Agents SDK ConversationState from inside a Teams handler.
 
