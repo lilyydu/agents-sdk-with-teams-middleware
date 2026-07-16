@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+	<PropertyGroup>
+		<TargetFramework>net8.0</TargetFramework>
+		<LangVersion>latest</LangVersion>
+		<ImplicitUsings>disable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<Compile Remove="wwwroot\**" />
+		<Content Remove="wwwroot\**" />
+		<EmbeddedResource Remove="wwwroot\**" />
+		<None Remove="wwwroot\**" />
+	</ItemGroup>
+
+	<!-- Extension-based Teams SDK + Agents SDK bridge. -->
+	<ItemGroup>
+		<ProjectReference Include="..\..\libraries\TeamsExtension\TeamsExtension.csproj" />
+	</ItemGroup>
+
+	<!--
+		The sample uses Teams SDK and Agents SDK types directly (handlers, MSAL auth),
+		so it references them explicitly in addition to what flows transitively from the
+		bridge. Same feeds as the library — see ../../nuget.config.
+	-->
+	<ItemGroup>
+		<PackageReference Include="Microsoft.Teams.Apps" Version="2.1.0-preview-0042-g5b6c09d3e9" />
+		<PackageReference Include="Microsoft.Agents.Authentication.Msal" Version="1.6.109-beta" />
+		<PackageReference Include="Microsoft.Agents.Hosting.AspNetCore" Version="1.6.109-beta" />
+	</ItemGroup>
+
+</Project>
