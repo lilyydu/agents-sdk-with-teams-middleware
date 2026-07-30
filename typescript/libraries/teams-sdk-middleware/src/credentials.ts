@@ -27,6 +27,17 @@
  *
  *   Outside a turn (proactive callbacks, background tasks, startup hooks) the
  *   AsyncLocalStorage is unset and we fall back to `getDefaultConnection()`.
+ *
+ * Agentic (Agent 365) requests:
+ *   When teams.ts needs an outbound token to act as the *agentic user*
+ *   (Teams-channel agentic turns), it invokes this callback with a third
+ *   argument carrying an `agenticIdentity`. In that case we mint the token via
+ *   the connection's `getAgenticUserToken` — the same Agents SDK path as
+ *   AgenticUserAuthorization — instead of the normal bot token. The bot's own
+ *   client_id is the blueprint the token derives from; teams.ts supplies the
+ *   agentic app-instance id, user id, and scopes. Agentic *bot* (app-instance)
+ *   outbound is intentionally not handled here: teams.ts has no such path, so
+ *   use `agentSdkTurnContext().sendActivity` for that case.
  */
 
 import type { AuthProvider } from '@microsoft/agents-hosting';
@@ -36,9 +47,50 @@ import type { AgentSdkConnections } from './install';
 
 const DEFAULT_SUFFIX = '/.default';
 
+/**
+ * Routing key used to select the connection that mints agentic tokens,
+ * mirroring the Agents SDK's `getTokenProvider(identity, 'agentic')` convention.
+ * With a single registered connection the lookup falls back to the default
+ * connection, which is sufficient for the common case.
+ */
+const AGENTIC_ROUTING_KEY = 'agentic';
+
+/**
+ * The agentic identity teams.ts passes to the token callback for agentic-user
+ * turns. Declared locally because the published `@microsoft/teams.api` barrel
+ * does not yet export `AgenticIdentity` (it ships on the Agent 365 line); this
+ * structural shape matches what teams.ts provides.
+ */
+export interface AgenticIdentity {
+  readonly agenticAppId: string;
+  readonly agenticUserId: string;
+  readonly tenantId?: string;
+  readonly agenticAppBlueprintId?: string;
+}
+
+/** Third-argument options bag teams.ts passes to the token callback. */
+export interface TokenRequestOptions {
+  readonly agenticIdentity?: AgenticIdentity;
+}
+
+/**
+ * Agentic-capable Agents SDK provider. The published `AuthProvider` type does
+ * not yet declare `getAgenticUserToken`, so we extend it structurally and probe
+ * at runtime — present on an agentic-capable `@microsoft/agents-hosting`.
+ */
+type AgenticCapableProvider = AuthProvider & {
+  getAgenticUserToken?: (
+    tenantId: string,
+    agentAppInstanceId: string,
+    upn: string,
+    scopes: string[]
+  ) => Promise<string>;
+};
+
 export type TeamsSdkTokenCallback = (
   scope: string | string[],
-  tenantId?: string
+  tenantId?: string,
+  options?: TokenRequestOptions
 ) => Promise<string>;
 
 /**
@@ -58,10 +110,37 @@ export type TeamsSdkTokenCallback = (
 export function createAgentSdkTokenProvider(
   connectionManager: AgentSdkConnections
 ): TeamsSdkTokenCallback {
-  return async (scope, _tenantId) => {
+  return async (scope, tenantId, options) => {
     const scopes = Array.isArray(scope) ? scope : [scope];
-    // Strip "/.default" off the first scope to derive the resource_url MSAL
-    // wants — '/.default' is appended back internally.
+
+    // Agentic-user path: teams.ts passes an `agenticIdentity` when the outbound
+    // call must act as the agentic user rather than the bot. Mint the user
+    // token through the same Agents SDK connection (single source of truth),
+    // mirroring AgenticUserAuthorization. teams.ts only populates this for
+    // agentic turns; otherwise we fall through to the normal bot token.
+    const agenticIdentity = options?.agenticIdentity;
+    if (agenticIdentity?.agenticUserId) {
+      const provider = selectProvider(
+        connectionManager,
+        AGENTIC_ROUTING_KEY
+      ) as AgenticCapableProvider;
+      if (typeof provider.getAgenticUserToken !== 'function') {
+        throw new Error(
+          'Agents SDK connection does not expose getAgenticUserToken; an ' +
+          'agentic-capable @microsoft/agents-hosting (MSAL provider) is required.'
+        );
+      }
+      return provider.getAgenticUserToken(
+        agenticIdentity.tenantId ?? tenantId ?? '',
+        agenticIdentity.agenticAppId,
+        agenticIdentity.agenticUserId,
+        scopes
+      );
+    }
+
+    // Non-agentic path: outbound Bot Framework Service token. Strip "/.default"
+    // off the first scope to derive the resource_url MSAL wants — '/.default'
+    // is appended back internally.
     const first = scopes[0] ?? '';
     const resourceUrl = first.endsWith(DEFAULT_SUFFIX)
       ? first.slice(0, -DEFAULT_SUFFIX.length)
