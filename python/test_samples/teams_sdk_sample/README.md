@@ -3,12 +3,12 @@
 ## Wiring
 
 ```python
-from teams_sdk import use_teams_sdk, agent_sdk_turn_context
+from teams_sdk import use_teams_sdk
 
 AGENT_SDK_APP = AgentApplication(...)
 TEAMS_APP = use_teams_sdk(AGENT_SDK_APP, CONNECTION_MANAGER)
 
-@TEAMS_APP.on_message_pattern("help")
+@TEAMS_APP.on_message("help")
 async def _help(ctx): ...
 
 @AGENT_SDK_APP.activity("message")
@@ -22,6 +22,10 @@ Agents SDK adapter — returning the configured `App` ready for handler
 registration. Pass extra `App` constructor options (e.g., `logger=`,
 `plugins=`) as keyword args.
 
+The sample's Teams SDK routes are `help`, `react`, `quote`, `targeted`, and
+`task`. The Agents SDK handles `agents sdk react`, `agents sdk proactive`, and
+the default echo fallback.
+
 For every `msteams` turn the middleware checks whether `TEAMS_APP` has a
 matching route; if so it hands the activity to
 `TEAMS_APP.activity_processor.process_activity(...)` and propagates the
@@ -34,7 +38,7 @@ turn falls through to `AGENT_SDK_APP`'s handlers.
 ```python
 from teams_sdk import agent_sdk_turn_context
 
-@TEAMS_APP.on_message_pattern("turn context")
+@TEAMS_APP.on_message("turn context")
 async def _turn_ctx(ctx):
     agent_sdk_ctx = agent_sdk_turn_context()
     await ctx.send("[Teams SDK] ...")

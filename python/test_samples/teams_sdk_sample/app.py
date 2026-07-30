@@ -3,7 +3,6 @@
 
 import asyncio
 import logging
-import re
 from os import environ, path
 
 from aiohttp import web
@@ -18,30 +17,20 @@ from microsoft_agents.hosting.aiohttp import (
 )
 from microsoft_agents.hosting.core import (
     AgentApplication,
-    ConversationState,
     MemoryStorage,
     TurnContext,
     TurnState,
 )
 from microsoft_agents.hosting.core.app import ApplicationOptions
 
-from teams_sdk import (
-    agent_sdk_turn_context,
-    use_teams_sdk,
-)
+from teams_sdk import use_teams_sdk
 
 # teams.py — owns every Teams turn with a matching route
 from microsoft_teams.apps import ActivityContext
 from microsoft_teams.api import (
-    AdaptiveCardActionMessageResponse,
-    AdaptiveCardInvokeActivity,
-    ConversationUpdateActivity,
-    MeetingEndEventActivity,
-    MeetingStartEventActivity,
     MessageActivity,
     MessageActivityInput,
     MessageReactionActivity,
-    MessageSubmitActionInvokeActivity,
     TaskFetchInvokeActivity,
     TaskModuleContinueResponse,
     TaskModuleInvokeResponse,
@@ -51,11 +40,9 @@ from microsoft_teams.api import (
 from microsoft_teams.api.clients.api_client import ApiClient
 from microsoft_teams.api.models.account import Account
 from microsoft_teams.api.models.attachment import AdaptiveCardAttachment, card_attachment
-from microsoft_teams.api.models.entity import CitationAppearance
-from microsoft_teams.api.models.entity.citation_entity import CitationUsageInfo
 from microsoft_teams.api.models.task_module import CardTaskModuleTaskInfo
 
-from cards import help_card, ping_card, task_form_card, task_launcher_card
+from cards import help_card, task_form_card, task_launcher_card
 
 
 logging.basicConfig(level=logging.INFO)
@@ -67,7 +54,6 @@ load_dotenv(path.join(path.dirname(__file__), ".env"))
 agents_sdk_config = load_configuration_from_env(environ)
 
 STORAGE = MemoryStorage()
-CONVERSATION_STATE = ConversationState(STORAGE)
 CONNECTION_MANAGER = MsalConnectionManager(**agents_sdk_config)
 ADAPTER = CloudAdapter(connection_manager=CONNECTION_MANAGER)
 
@@ -98,47 +84,6 @@ async def _help(ctx: ActivityContext[MessageActivity]):
     await ctx.send(MessageActivityInput().add_card(help_card()))
 
 
-@TEAMS_APP.on_message("cards")
-async def _cards(ctx: ActivityContext[MessageActivity]):
-    """Send an Adaptive Card. Pressing the button fires an Action.Execute invoke
-    routed to ``_on_card_action`` below; teams.py wraps the typed response in
-    an ``InvokeResponse`` and ``TeamsSDKMiddleware`` propagates it back through
-    the Agents SDK adapter so the HTTP layer writes the correct response."""
-    await ctx.send(MessageActivityInput().add_card(ping_card()))
-
-
-@TEAMS_APP.on_message("citation")
-async def _citation(ctx: ActivityContext[MessageActivity]):
-    """Send a message with a citation, sensitivity label, AI-generated label, and feedback affordance."""
-    activity = (
-        MessageActivityInput(text="Here is a response with citations [1].")
-        .add_citation(
-            1,
-            CitationAppearance(
-                name="Teams SDK Documentation",
-                abstract="Documentation for the Microsoft Teams SDK.",
-                url="https://microsoft.github.io/teams-sdk/welcome",
-                usage_info=CitationUsageInfo(
-                    at_id="sensitivity-1",
-                    name="Confidential",
-                    description="This information is confidential and for internal use only.",
-                ),
-            ),
-        )
-        .add_ai_generated()
-        .add_feedback()
-    )
-    await ctx.send(activity)
-
-
-@TEAMS_APP.on_message("stream")
-async def _stream(ctx: ActivityContext[MessageActivity]):
-    """Streaming response: informative status update → chunked text → finalize."""
-    ctx.stream.update("Thinking…")
-    ctx.stream.emit("Streaming is a powerful feature ")
-    ctx.stream.emit("for sending long responses ")
-    ctx.stream.emit("incrementally.")
-    await ctx.stream.close()
 
 
 @TEAMS_APP.on_message("react")
@@ -171,63 +116,11 @@ async def _targeted(ctx: ActivityContext[MessageActivity]):
     await ctx.send(targeted_msg)
 
 
-@TEAMS_APP.on_message("proactive")
-async def _proactive(ctx: ActivityContext[MessageActivity]):
-    """Fire-and-forget delayed proactive message."""
-    conv_id = ctx.activity.conversation.id
-    await ctx.send("Proactive message coming in ~3s…")
-
-    async def _later():
-        await asyncio.sleep(3)
-        try:
-            await TEAMS_APP.send(
-                conv_id,
-                MessageActivityInput().add_text("📣 Proactive message!"),
-            )
-        except Exception:
-            log.exception("proactive: TEAMS_APP.send failed")
-
-    asyncio.create_task(_later())
-
-
 @TEAMS_APP.on_message("task")
 async def _task(ctx: ActivityContext[MessageActivity]):
     """Send a card whose button opens a task module (task/fetch → task/submit)."""
     await ctx.send(MessageActivityInput().add_card(task_launcher_card()))
 
-
-@TEAMS_APP.on_message("turn context")
-async def _turn_context(ctx: ActivityContext[MessageActivity]):
-    """Use Agents SDK ConversationState from inside a Teams handler.
-
-    Demonstrates the key value prop: Teams handlers can tap into Agents SDK
-    infrastructure (state management, storage) without duplicating it."""
-    agent_sdk_ctx = agent_sdk_turn_context()
-
-    # Access Agents SDK conversation state from inside a Teams handler
-    state_accessor = CONVERSATION_STATE.create_property("message_count")
-    count = await state_accessor.get(agent_sdk_ctx, default_value_or_factory=0)
-    count += 1
-    await state_accessor.set(agent_sdk_ctx, count)
-    await CONVERSATION_STATE.save(agent_sdk_ctx)
-
-    await ctx.send(
-        f"📊 This conversation has received **{count}** message(s) "
-        f"(tracked via Agents SDK ConversationState from a Teams handler)."
-    )
-
-
-# ─── Adaptive Card invoke handler ─────────────────────────────────
-
-@TEAMS_APP.on_card_action_execute
-async def _on_card_action(ctx: ActivityContext[AdaptiveCardInvokeActivity]):
-    """Catch-all INVOKE handler for any Action.Execute on an Adaptive Card."""
-    action = ctx.activity.value.action
-    log.info("INVOKE adaptiveCard/action verb=%s data=%s", action.verb, action.data)
-    await ctx.send(
-        f"[Teams SDK] Adaptive Card action received. Data: {action.data}"
-    )
-    return AdaptiveCardActionMessageResponse(value="Action handled.")
 
 
 # ─── Task module handlers ─────────────────────────────────────────
@@ -269,48 +162,10 @@ async def _on_message_reaction(ctx: ActivityContext[MessageReactionActivity]):
     await ctx.send(f"[Teams SDK] Reactions: {summary}")
 
 
-@TEAMS_APP.on_message_submit_feedback
-async def _on_feedback(ctx: ActivityContext[MessageSubmitActionInvokeActivity]):
-    await ctx.send("[Teams SDK] Thanks for your feedback!")
-
-
-@TEAMS_APP.on_conversation_update
-async def _on_conversation_update(ctx: ActivityContext[ConversationUpdateActivity]):
-    """Welcome new members."""
-    added = ctx.activity.members_added or []
-    bot_id = ctx.activity.recipient.id if ctx.activity.recipient else None
-    if any(m.id != bot_id for m in added):
-        await ctx.send(
-            "Hello from Teams SDK! Type **help** to see available commands."
-        )
-
-
-@TEAMS_APP.on_meeting_start
-async def _on_meeting_start(ctx: ActivityContext[MeetingStartEventActivity]):
-    await ctx.send("[Teams SDK] Meeting has started!")
-
-
-@TEAMS_APP.on_meeting_end
-async def _on_meeting_end(ctx: ActivityContext[MeetingEndEventActivity]):
-    await ctx.send("[Teams SDK] Meeting has ended!")
-
 
 # ════════════════════ AGENT_SDK_APP — fallthrough + "agents sdk *" commands ════════════════════
 # These fire for Teams activities that have no matching teams.py route (TeamsSDKMiddleware
 # falls through) and for any non-Teams channel.
-
-@AGENT_SDK_APP.conversation_update("membersAdded")
-async def _agent_sdk_welcome(context: TurnContext, _state: TurnState):
-    """Welcome from the Agents SDK side. Note: when TEAMS_APP also has an
-    on_conversation_update handler that matches, the middleware short-circuits
-    to teams.py and this handler never runs for Teams turns. It's still useful
-    for non-Teams channels."""
-    added = context.activity.members_added or []
-    bot_id = context.activity.recipient.id if context.activity.recipient else None
-    if any(m.id != bot_id for m in added):
-        await context.send_activity(
-            "[Agent SDK] Welcome! (This is the Agents SDK welcome path.)"
-        )
 
 
 @AGENT_SDK_APP.message("agents sdk react")
@@ -340,36 +195,6 @@ async def _agents_sdk_proactive(context: TurnContext, _state: TurnState):
             "[Teams SDK] Proactive message triggered from an Agents SDK handler!"
         )
     )
-
-
-@AGENT_SDK_APP.message("agents sdk citation")
-async def _agents_sdk_citation(context: TurnContext, _state: TurnState):
-    """Build a Teams citation activity in Agents SDK code, send via teams.py.
-
-    Uses a per-turn ``ApiClient`` so the send targets the inbound service URL."""
-    conv_id = context.activity.conversation.id
-    teams_message = (
-        MessageActivityInput(
-            text="Agent SDK handler built this citation using Teams SDK types [1]."
-        )
-        .add_citation(
-            1,
-            CitationAppearance(
-                name="Agent SDK Documentation",
-                abstract="Documentation for the Microsoft 365 Agents SDK.",
-                url="https://learn.microsoft.com/en-us/microsoft-365/agents-sdk/",
-                usage_info=CitationUsageInfo(
-                    at_id="sensitivity-1",
-                    name="Confidential",
-                    description="This information is confidential and for internal use only.",
-                ),
-            ),
-        )
-        .add_ai_generated()
-        .add_feedback()
-    )
-    api = ApiClient(service_url=context.activity.service_url, options=TEAMS_APP.api.http)
-    await api.conversations.activities(conv_id).create(teams_message)
 
 
 @AGENT_SDK_APP.activity("message")

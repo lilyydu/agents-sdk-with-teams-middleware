@@ -34,7 +34,7 @@ npm run start --workspace teams-sdk-sample
 
 ```ts
 import { AgentApplication, MsalConnectionManager } from '@microsoft/agents-hosting';
-import { useTeamsSdk, agentSdkTurnContext } from 'teams-sdk-middleware';
+import { useTeamsSdk } from 'teams-sdk-middleware';
 
 const AGENT_SDK_APP = new AgentApplication({ storage: /* ... */ });
 const TEAMS_APP = useTeamsSdk(AGENT_SDK_APP, new MsalConnectionManager());
@@ -49,6 +49,10 @@ AGENT_SDK_APP.onActivity('message', async (context) => {
   await context.sendActivity(`Echo: ${context.activity.text}`);
 });
 ```
+
+The sample's Teams SDK routes are `help`, `react`, `quote`, `targeted`, and
+`task`. The Agents SDK handles `agents sdk react`, `agents sdk proactive`, and
+the default echo fallback.
 
 See [`test_samples/teams-sdk-sample/MIGRATION.md`](./test_samples/teams-sdk-sample/MIGRATION.md)
 for the full migration guide from `TeamsActivityHandler` to this bridge.

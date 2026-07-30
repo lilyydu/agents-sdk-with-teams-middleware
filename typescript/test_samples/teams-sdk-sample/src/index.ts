@@ -11,7 +11,6 @@
 
 import {
   AgentApplication,
-  ConversationState,
   loadAuthConfigFromEnv,
   MemoryStorage,
   MsalConnectionManager,
@@ -21,14 +20,9 @@ import {
 import { startServer } from '@microsoft/agents-hosting-express';
 import { Client as ApiClient, MessageActivity } from '@microsoft/teams.api';
 
-import { agentSdkTurnContext, useTeamsSdk } from 'teams-sdk-middleware';
+import { useTeamsSdk } from 'teams-sdk-middleware';
 
-import {
-  helpCard,
-  pingCard,
-  taskFormCard,
-  taskLauncherCard,
-} from './cards';
+import { helpCard, taskFormCard, taskLauncherCard } from './cards';
 
 // ───────────────────────────── Bootstrap ─────────────────────────────
 
@@ -39,7 +33,6 @@ const CONNECTION_MANAGER = new MsalConnectionManager(
 );
 
 const STORAGE = new MemoryStorage();
-const CONVERSATION_STATE = new ConversationState(STORAGE);
 
 const AGENT_SDK_APP = new AgentApplication<TurnState>({
   storage: STORAGE,
@@ -59,39 +52,6 @@ const TEAMS_APP = useTeamsSdk(AGENT_SDK_APP, CONNECTION_MANAGER);
 
 TEAMS_APP.message('help', async ({ send }) => {
   await send(new MessageActivity().addCard('adaptive', helpCard() as any));
-});
-
-TEAMS_APP.message('cards', async ({ send }) => {
-  // Send an Adaptive Card. Pressing the button fires Action.Execute, routed to
-  // the 'card.action.ping' handler below; teams.ts wraps the typed response in
-  // an InvokeResponse and TeamsSdkMiddleware propagates it back through the
-  // Agents SDK adapter so the HTTP layer writes the correct response.
-  await send(new MessageActivity().addCard('adaptive', pingCard() as any));
-});
-
-TEAMS_APP.message('citation', async ({ send }) => {
-  const activity = new MessageActivity('Here is a response with citations [1].')
-    .addCitation(1, {
-      name: 'Teams SDK Documentation',
-      abstract: 'Documentation for the Microsoft Teams SDK.',
-      url: 'https://microsoft.github.io/teams-sdk/welcome',
-      usageInfo: {
-        '@id': 'sensitivity-1',
-        name: 'Confidential',
-        description: 'This information is confidential and for internal use only.',
-      },
-    } as any)
-    .addAiGenerated()
-    .addFeedback();
-  await send(activity);
-});
-
-TEAMS_APP.message('stream', async ({ stream }) => {
-  stream.update('Thinking…');
-  stream.emit('Streaming is a powerful feature ');
-  stream.emit('for sending long responses ');
-  stream.emit('incrementally.');
-  await stream.close();
 });
 
 TEAMS_APP.message('react', async ({ send, api, activity }) => {
@@ -119,45 +79,9 @@ TEAMS_APP.message('targeted', async ({ send, activity }) => {
   await send(targeted);
 });
 
-TEAMS_APP.message('proactive', async ({ send, activity }) => {
-  const convId = activity.conversation.id;
-  await send('Proactive message coming in ~3s…');
-  setTimeout(() => {
-    TEAMS_APP.send(convId, new MessageActivity('📣 Proactive message!')).catch((err) =>
-      console.error('proactive: TEAMS_APP.send failed', err)
-    );
-  }, 3000);
-});
-
 TEAMS_APP.message('task', async ({ send }) => {
   await send(new MessageActivity().addCard('adaptive', taskLauncherCard() as any));
 });
-
-TEAMS_APP.message('turn context', async ({ send }) => {
-  // Use Agents SDK ConversationState from inside a Teams handler.
-  // Demonstrates the key value prop: Teams handlers can tap into Agents SDK
-  // infrastructure (state management, storage) without duplicating it.
-  const agentSdkCtx = agentSdkTurnContext();
-  const accessor = CONVERSATION_STATE.createProperty<number>('messageCount');
-  await CONVERSATION_STATE.load(agentSdkCtx);
-  const count = ((await accessor.get(agentSdkCtx)) ?? 0) + 1;
-  await accessor.set(agentSdkCtx, count);
-  await CONVERSATION_STATE.saveChanges(agentSdkCtx);
-
-  await send(
-    `📊 This conversation has received **${count}** message(s) ` +
-    `(tracked via Agents SDK ConversationState from a Teams handler).`
-  );
-});
-
-// ─── Adaptive Card invoke handler ─────────────────────────────────
-
-TEAMS_APP.on('card.action.ping' as any, (async ({ activity, send }: any) => {
-  const action = activity.value.action;
-  console.log(`INVOKE adaptiveCard/action verb=${action.verb} data=${JSON.stringify(action.data)}`);
-  await send(`[Teams SDK] Adaptive Card action received. Data: ${JSON.stringify(action.data)}`);
-  return { statusCode: 200, type: 'application/vnd.microsoft.activity.message', value: 'Action handled.' };
-}) as any);
 
 // ─── Task module (dialog) handlers ────────────────────────────────
 
@@ -191,29 +115,9 @@ TEAMS_APP.on('messageReaction', async ({ activity, send }) => {
   );
 });
 
-TEAMS_APP.on('message.submit' as any, (async ({ send }: any) => {
-  await send('[Teams SDK] Thanks for your feedback!');
-}) as any);
-
-TEAMS_APP.on('meetingStart', async ({ send }) => {
-  await send('[Teams SDK] Meeting has started!');
-});
-
-TEAMS_APP.on('meetingEnd', async ({ send }) => {
-  await send('[Teams SDK] Meeting has ended!');
-});
-
 // ════════════════════ AGENT_SDK_APP — fallthrough + "agents *" commands ════════════════════
 // These fire for Teams activities that have no matching teams.ts route
 // (TeamsSdkMiddleware falls through) and for any non-Teams channel.
-
-AGENT_SDK_APP.onConversationUpdate('membersAdded', async (context: TurnContext) => {
-  const added = context.activity.membersAdded ?? [];
-  const botId = context.activity.recipient?.id;
-  if (added.some((m) => m.id !== botId)) {
-    await context.sendActivity('[Agent SDK] Welcome! (This is the Agents SDK welcome path.)');
-  }
-});
 
 AGENT_SDK_APP.onMessage('agents sdk react', async (context: TurnContext) => {
   // Reach into teams.ts's API client from an Agents SDK handler.
@@ -241,29 +145,6 @@ AGENT_SDK_APP.onMessage('agents sdk proactive', async (context: TurnContext) => 
   await api.conversations
     .activities(convId)
     .create(new MessageActivity('[Teams SDK] Proactive message triggered from an Agents SDK handler!'));
-});
-
-AGENT_SDK_APP.onMessage('agents sdk citation', async (context: TurnContext) => {
-  // Build a Teams citation activity in Agents SDK code, send via teams.ts.
-  // Uses a per-turn ApiClient so the send targets the inbound service URL.
-  const convId = context.activity.conversation!.id;
-  const teamsMessage = new MessageActivity(
-    'Agent SDK handler built this citation using Teams SDK types [1].'
-  )
-    .addCitation(1, {
-      name: 'Agent SDK Documentation',
-      abstract: 'Documentation for the Microsoft 365 Agents SDK.',
-      url: 'https://learn.microsoft.com/en-us/microsoft-365/agents-sdk/',
-      usageInfo: {
-        '@id': 'sensitivity-1',
-        name: 'Confidential',
-        description: 'This information is confidential and for internal use only.',
-      },
-    } as any)
-    .addAiGenerated()
-    .addFeedback();
-  const api = new ApiClient(context.activity.serviceUrl!, TEAMS_APP.api.http);
-  await api.conversations.activities(convId).create(teamsMessage);
 });
 
 AGENT_SDK_APP.onActivity('message', async (context: TurnContext) => {

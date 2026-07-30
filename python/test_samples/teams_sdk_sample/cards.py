@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from microsoft_teams.cards.core import (
     AdaptiveCard,
-    ExecuteAction,
     Fact,
     FactSet,
     SubmitAction,
@@ -26,14 +25,10 @@ def help_card() -> AdaptiveCard:
             FactSet(
                 facts=[
                     Fact(title="help", value="This command list"),
-                    Fact(title="cards", value="Adaptive Card with Action.Execute invoke"),
-                    Fact(title="citation", value="AI labels, citations, sensitivity, feedback"),
-                    Fact(title="stream", value="Streaming response with informative updates"),
                     Fact(title="react", value="Bot adds/removes emoji reactions"),
                     Fact(title="quote", value="Bot quotes its own message"),
-                    Fact(title="proactive", value="Delayed proactive message"),
+                    Fact(title="targeted", value="Ephemeral message visible only to sender"),
                     Fact(title="task", value="Task module fetch/submit flow"),
-                    Fact(title="turn context", value="Use Agent SDK TurnContext from a teams.py handler"),
                 ]
             ),
             TextBlock(
@@ -45,32 +40,8 @@ def help_card() -> AdaptiveCard:
                 facts=[
                     Fact(title="agents sdk react", value="Reach teams.py's API client from an Agents SDK handler"),
                     Fact(title="agents sdk proactive", value="Trigger a proactive send from an Agents SDK handler"),
-                    Fact(title="agents sdk citation", value="Build a Teams citation activity from an Agents SDK handler"),
                     Fact(title="anything else", value="Echo via Agents SDK '[Agent SDK] You said: ...'"),
                 ]
-            ),
-        ],
-    )
-
-
-def ping_card() -> AdaptiveCard:
-    """Demo card whose button fires an Action.Execute invoke (verb=ping)."""
-    return AdaptiveCard(
-        version="1.5",
-        body=[
-            TextBlock(text="🎯 Invoke demo", weight="Bolder", size="Medium"),
-            TextBlock(
-                text="Press the button to fire an Action.Execute invoke.",
-                wrap=True,
-            ),
-        ],
-        actions=[
-            ExecuteAction(
-                # teams.py's @on_card_action_execute('ping') matches on
-                # data.action (NOT on verb). Both are sent for parity.
-                verb="ping",
-                title="Ping the bot",
-                data={"action": "ping", "sentAt": "now"},
             ),
         ],
     )
