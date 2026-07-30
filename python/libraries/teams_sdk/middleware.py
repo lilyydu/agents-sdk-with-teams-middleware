@@ -42,10 +42,10 @@ class TeamsSDKMiddleware(Middleware):
     async def on_turn(
         self,
         context: TurnContext,
-        logic: Callable[[], Awaitable],
+        logic: Callable[[TurnContext], Awaitable],
     ) -> None:
         if context.activity.channel_id != TEAMS_CHANNEL_ID:
-            await logic()
+            await logic(context)
             return
 
         core_activity = self._translate_inbound(context.activity)
@@ -58,7 +58,7 @@ class TeamsSDKMiddleware(Middleware):
 
         if not self._teams_app.router.select_handlers(core_activity):
             # No teams.py route matches; let AgentApplication try its handlers.
-            await logic()
+            await logic(context)
             return
 
         event = ActivityEvent(

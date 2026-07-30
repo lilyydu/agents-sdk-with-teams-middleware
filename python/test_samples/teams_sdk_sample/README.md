@@ -8,7 +8,7 @@ from teams_sdk import use_teams_sdk
 AGENT_SDK_APP = AgentApplication(...)
 TEAMS_APP = use_teams_sdk(AGENT_SDK_APP, CONNECTION_MANAGER)
 
-@TEAMS_APP.on_message("help")
+@TEAMS_APP.on_message_pattern("help")
 async def _help(ctx): ...
 
 @AGENT_SDK_APP.activity("message")
@@ -26,6 +26,30 @@ The sample's Teams SDK routes are `help`, `react`, `quote`, `targeted`, and
 `task`. The Agents SDK handles `agents sdk react`, `agents sdk proactive`, and
 the default echo fallback.
 
+### Matching commands in group chats and channels
+
+Both SDKs match **plain string patterns exactly** — teams.py compares
+`ctx.text == pattern`, the Agents SDK compares `text == select`. In a group
+chat or channel the bot has to be @mentioned, so `activity.text` arrives as
+`"<at>MyBot</at> help"` (or `" help"` once the mention markup is stripped) and
+a bare string never matches. The sample therefore registers every command
+through a `_command()` helper that builds a mention- and whitespace-tolerant
+regex:
+
+```python
+@TEAMS_APP.on_message_pattern(_command("help"))
+async def _help(ctx): ...
+
+@AGENT_SDK_APP.message(_command("agents sdk react"))
+async def _agents_sdk_react(context, state): ...
+```
+
+The trailing `$` anchor keeps it correct under both selectors: teams.py uses
+`pattern.match(...)` and the Agents SDK uses `re.fullmatch(...)`. Note this is
+a Python-only concern — teams.ts matches with
+`new RegExp(pattern).test(activity.text)`, which already tolerates a leading
+mention.
+
 For every `msteams` turn the middleware checks whether `TEAMS_APP` has a
 matching route; if so it hands the activity to
 `TEAMS_APP.activity_processor.process_activity(...)` and propagates the
@@ -38,7 +62,7 @@ turn falls through to `AGENT_SDK_APP`'s handlers.
 ```python
 from teams_sdk import agent_sdk_turn_context
 
-@TEAMS_APP.on_message("turn context")
+@TEAMS_APP.on_message_pattern("turn context")
 async def _turn_ctx(ctx):
     agent_sdk_ctx = agent_sdk_turn_context()
     await ctx.send("[Teams SDK] ...")

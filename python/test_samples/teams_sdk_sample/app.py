@@ -3,6 +3,7 @@
 
 import asyncio
 import logging
+import re
 from os import environ, path
 
 from aiohttp import web
@@ -48,6 +49,26 @@ from cards import help_card, task_form_card, task_launcher_card
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("rfc-sample")
 
+
+def _command(name: str) -> re.Pattern[str]:
+    """Build a command pattern tolerant of an @mention and surrounding whitespace.
+
+    In group chats and channels the bot must be @mentioned, so ``activity.text``
+    arrives as ``"<at>MyBot</at> targeted"`` — or just ``" targeted"`` when the
+    mention markup has already been stripped, leaving the separating space.
+    Both SDKs match plain string patterns exactly (teams.py compares
+    ``ctx.text == pattern``, the Agents SDK compares ``text == select``), so a
+    bare string only ever matches in 1:1 chats.
+
+    Regex patterns are matched with ``pattern.match`` (teams.py) and
+    ``re.fullmatch`` (Agents SDK); a trailing ``$`` satisfies both.
+    """
+    mention = r"(?:<at\b[^>]*>.*?</at>|@\S+)"
+    return re.compile(
+        rf"\s*(?:{mention}\s*)*{re.escape(name)}\s*$",
+        re.IGNORECASE | re.DOTALL,
+    )
+
 # ──────────────────────────── Bootstrap ────────────────────────────
 
 load_dotenv(path.join(path.dirname(__file__), ".env"))
@@ -60,6 +81,7 @@ ADAPTER = CloudAdapter(connection_manager=CONNECTION_MANAGER)
 # ─── Agents SDK side ──────────────────────────────────────────────
 AGENT_SDK_APP = AgentApplication[TurnState](
     options=ApplicationOptions(storage=STORAGE, adapter=ADAPTER),
+    connection_manager=CONNECTION_MANAGER,
 )
 
 
@@ -78,7 +100,7 @@ TEAMS_APP = use_teams_sdk(AGENT_SDK_APP, CONNECTION_MANAGER)
 
 # ════════════════════ TEAMS_APP — Teams SDK feature showcase ════════════════════
 
-@TEAMS_APP.on_message("help")
+@TEAMS_APP.on_message_pattern(_command("help"))
 async def _help(ctx: ActivityContext[MessageActivity]):
     """List the commands this sample understands."""
     await ctx.send(MessageActivityInput().add_card(help_card()))
@@ -86,7 +108,7 @@ async def _help(ctx: ActivityContext[MessageActivity]):
 
 
 
-@TEAMS_APP.on_message("react")
+@TEAMS_APP.on_message_pattern(_command("react"))
 async def _react(ctx: ActivityContext[MessageActivity]):
     """Bot adds, then removes, an emoji reaction on its own message."""
     response = await ctx.send("React to this message! I'll add 👍 and remove it.")
@@ -99,13 +121,13 @@ async def _react(ctx: ActivityContext[MessageActivity]):
         log.exception("react: reactions API call failed")
 
 
-@TEAMS_APP.on_message("quote")
+@TEAMS_APP.on_message_pattern(_command("quote"))
 async def _quote(ctx: ActivityContext[MessageActivity]):
     """Reply to the user's message with a quoted reply (auto-quotes inbound)."""
     await ctx.reply("Quoting your message!")
 
 
-@TEAMS_APP.on_message("targeted")
+@TEAMS_APP.on_message_pattern(_command("targeted"))
 async def _targeted(ctx: ActivityContext[MessageActivity]):
     """Send a targeted (ephemeral) message visible only to the sender."""
     sender = ctx.activity.from_
@@ -116,7 +138,7 @@ async def _targeted(ctx: ActivityContext[MessageActivity]):
     await ctx.send(targeted_msg)
 
 
-@TEAMS_APP.on_message("task")
+@TEAMS_APP.on_message_pattern(_command("task"))
 async def _task(ctx: ActivityContext[MessageActivity]):
     """Send a card whose button opens a task module (task/fetch → task/submit)."""
     await ctx.send(MessageActivityInput().add_card(task_launcher_card()))
@@ -168,7 +190,7 @@ async def _on_message_reaction(ctx: ActivityContext[MessageReactionActivity]):
 # falls through) and for any non-Teams channel.
 
 
-@AGENT_SDK_APP.message("agents sdk react")
+@AGENT_SDK_APP.message(_command("agents sdk react"))
 async def _agents_sdk_react(context: TurnContext, _state: TurnState):
     response = await context.send_activity(
         "[Agent SDK] Adding then removing 👍 via teams.py API client…"
@@ -180,7 +202,7 @@ async def _agents_sdk_react(context: TurnContext, _state: TurnState):
         log.exception("agents sdk react: reactions API call failed")
 
 
-@AGENT_SDK_APP.message("agents sdk proactive")
+@AGENT_SDK_APP.message(_command("agents sdk proactive"))
 async def _agents_sdk_proactive(context: TurnContext, _state: TurnState):
     """Send a proactive-style message via teams.py's API client.
 
