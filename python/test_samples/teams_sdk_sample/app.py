@@ -24,7 +24,7 @@ from microsoft_agents.hosting.core import (
 )
 from microsoft_agents.hosting.core.app import ApplicationOptions
 
-from teams_sdk import use_teams_sdk
+from teams_sdk import is_teams_channel, use_teams_sdk
 
 # teams.py — owns every Teams turn with a matching route
 from microsoft_teams.apps import ActivityContext
@@ -51,21 +51,9 @@ log = logging.getLogger("rfc-sample")
 
 
 def _command(name: str) -> re.Pattern[str]:
-    """Build a command pattern tolerant of an @mention and surrounding whitespace.
-
-    In group chats and channels the bot must be @mentioned, so ``activity.text``
-    arrives as ``"<at>MyBot</at> targeted"`` — or just ``" targeted"`` when the
-    mention markup has already been stripped, leaving the separating space.
-    Both SDKs match plain string patterns exactly (teams.py compares
-    ``ctx.text == pattern``, the Agents SDK compares ``text == select``), so a
-    bare string only ever matches in 1:1 chats.
-
-    Regex patterns are matched with ``pattern.match`` (teams.py) and
-    ``re.fullmatch`` (Agents SDK); a trailing ``$`` satisfies both.
-    """
     mention = r"(?:<at\b[^>]*>.*?</at>|@\S+)"
     return re.compile(
-        rf"\s*(?:{mention}\s*)*{re.escape(name)}\s*$",
+        rf"\s*(?:{mention}\s*)*{re.escape(name)}[ \t]*(?:\r?\n[\s\S]*)?$",
         re.IGNORECASE | re.DOTALL,
     )
 
@@ -104,8 +92,6 @@ TEAMS_APP = use_teams_sdk(AGENT_SDK_APP, CONNECTION_MANAGER)
 async def _help(ctx: ActivityContext[MessageActivity]):
     """List the commands this sample understands."""
     await ctx.send(MessageActivityInput().add_card(help_card()))
-
-
 
 
 @TEAMS_APP.on_message_pattern(_command("react"))
@@ -190,41 +176,72 @@ async def _on_message_reaction(ctx: ActivityContext[MessageReactionActivity]):
 # falls through) and for any non-Teams channel.
 
 
+@AGENT_SDK_APP.message(_command("help"))
+async def _help_non_teams(context: TurnContext, _state: TurnState):
+    await context.send_activity(
+        "[Agent SDK] Commands: help, channel, agents sdk react, agents sdk proactive.\n"
+        "Teams-only extras (react, quote, targeted, task) need the Teams SDK routes."
+    )
+
+
+@AGENT_SDK_APP.message(_command("channel"))
+async def _channel(context: TurnContext, _state: TurnState):
+    via = (
+        "Teams turn with no matching teams.py route → fell through"
+        if is_teams_channel(context.activity)
+        else "non-Teams channel → passed straight through"
+    )
+    await context.send_activity(
+        f"[Agent SDK] channelId={context.activity.channel_id} ({via})"
+    )
+
+
 @AGENT_SDK_APP.message(_command("agents sdk react"))
 async def _agents_sdk_react(context: TurnContext, _state: TurnState):
+
+    if not is_teams_channel(context.activity):
+        await context.send_activity(
+            f"[Agent SDK] 'agents sdk react' needs the Teams reactions API; "
+            f"channelId={context.activity.channel_id} returns 404 for it."
+        )
+        return
     response = await context.send_activity(
         "[Agent SDK] Adding then removing 👍 via teams.py API client…"
     )
     conv_id = context.activity.conversation.id
+    api = ApiClient(service_url=context.activity.service_url, options=TEAMS_APP.api.http)
     try:
-        await TEAMS_APP.api.reactions.add(conv_id, response.id, "like")
+        await api.reactions.add(conv_id, response.id, "like")
+        await asyncio.sleep(2)
+        await api.reactions.delete(conv_id, response.id, "like")
     except Exception:
         log.exception("agents sdk react: reactions API call failed")
 
 
 @AGENT_SDK_APP.message(_command("agents sdk proactive"))
 async def _agents_sdk_proactive(context: TurnContext, _state: TurnState):
-    """Send a proactive-style message via teams.py's API client.
-
-    ``TEAMS_APP.api`` is pinned to the service URL provided at App construction,
-    so for handlers driven by the Agents SDK (whose activities may arrive on a
-    different service URL) we build a per-turn ``ApiClient`` against the inbound
-    ``context.activity.service_url`` while reusing the shared HTTP client."""
     conv_id = context.activity.conversation.id
     api = ApiClient(service_url=context.activity.service_url, options=TEAMS_APP.api.http)
-    await api.conversations.activities(conv_id).create(
-        MessageActivityInput().add_text(
-            "[Teams SDK] Proactive message triggered from an Agents SDK handler!"
-        )
+    bot = context.activity.recipient
+    outgoing = MessageActivityInput().add_text(
+        "[Teams SDK] Proactive message triggered from an Agents SDK handler!"
     )
+    outgoing.from_ = Account(id=bot.id, name=bot.name)
+    await api.conversations.activities(conv_id).create(outgoing)
 
 
 @AGENT_SDK_APP.activity("message")
 async def _echo(context: TurnContext, _state: TurnState):
-    """Default echo fallthrough. Fires when no teams.py route matches and
-    none of the ``agents sdk *`` commands above matched either."""
+    """Fallthrough: no teams.py route and no command above matched."""
     text = (context.activity.text or "").strip()
-    await context.send_activity(f"[Agent SDK] You said: {text}")
+    # Email bodies carry a signature and/or quoted thread; echoing all of it
+    # back grows on every round trip.
+    first_line = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
+    if first_line != text:
+        text = f"{first_line} […]"
+    await context.send_activity(
+        f"[Agent SDK] ({context.activity.channel_id}) You said: {text}"
+    )
 
 
 # ─────────────────────────── HTTP wiring ───────────────────────────

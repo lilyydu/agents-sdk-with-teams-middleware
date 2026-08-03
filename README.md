@@ -23,6 +23,11 @@ Each language tree has the same `libraries/` (the reusable bridge) + `test_sampl
 | **typescript/** | `libraries/teams-sdk-middleware` | `test_samples/teams-sdk-sample` |
 | **dotnet/** | `libraries/TeamsSdkMiddleware` | `test_samples/TeamsMiddlewareSample` |
 
+`tools/webchat/` is language-agnostic: a small Web Chat / Direct Line harness for
+exercising whichever sample is currently bound to the bot endpoint on a **non-Teams**
+channel. Together with the **Email** channel it covers the passthrough half of the
+contract.
+
 ## Getting started
 
 Build/run instructions per language, plus the end-to-end Teams setup (dev tunnel +

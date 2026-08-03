@@ -34,6 +34,18 @@ from ._token import _TeamsSDKToken
 TEAMS_CHANNEL_ID = "msteams"
 
 
+def is_teams_channel(activity) -> bool:
+    """True for Teams turns, including sub-channels like ``msteams:COPILOT``."""
+    channel_id = activity.channel_id
+    if not channel_id:
+        return False
+
+    channel = getattr(channel_id, "channel", None)
+    if channel is None:
+        channel = str(channel_id).split(":", 1)[0]
+    return channel == TEAMS_CHANNEL_ID
+
+
 class TeamsSDKMiddleware(Middleware):
 
     def __init__(self, teams_app: App) -> None:
@@ -44,7 +56,7 @@ class TeamsSDKMiddleware(Middleware):
         context: TurnContext,
         logic: Callable[[TurnContext], Awaitable],
     ) -> None:
-        if context.activity.channel_id != TEAMS_CHANNEL_ID:
+        if not is_teams_channel(context.activity):
             await logic(context)
             return
 

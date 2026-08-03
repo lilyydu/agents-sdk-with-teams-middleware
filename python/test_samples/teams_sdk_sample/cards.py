@@ -40,6 +40,7 @@ def help_card() -> AdaptiveCard:
                 facts=[
                     Fact(title="agents sdk react", value="Reach teams.py's API client from an Agents SDK handler"),
                     Fact(title="agents sdk proactive", value="Trigger a proactive send from an Agents SDK handler"),
+                    Fact(title="channel", value="Report the channel this turn arrived on and how it was routed"),
                     Fact(title="anything else", value="Echo via Agents SDK '[Agent SDK] You said: ...'"),
                 ]
             ),

@@ -26,29 +26,6 @@ The sample's Teams SDK routes are `help`, `react`, `quote`, `targeted`, and
 `task`. The Agents SDK handles `agents sdk react`, `agents sdk proactive`, and
 the default echo fallback.
 
-### Matching commands in group chats and channels
-
-Both SDKs match **plain string patterns exactly** — teams.py compares
-`ctx.text == pattern`, the Agents SDK compares `text == select`. In a group
-chat or channel the bot has to be @mentioned, so `activity.text` arrives as
-`"<at>MyBot</at> help"` (or `" help"` once the mention markup is stripped) and
-a bare string never matches. The sample therefore registers every command
-through a `_command()` helper that builds a mention- and whitespace-tolerant
-regex:
-
-```python
-@TEAMS_APP.on_message_pattern(_command("help"))
-async def _help(ctx): ...
-
-@AGENT_SDK_APP.message(_command("agents sdk react"))
-async def _agents_sdk_react(context, state): ...
-```
-
-The trailing `$` anchor keeps it correct under both selectors: teams.py uses
-`pattern.match(...)` and the Agents SDK uses `re.fullmatch(...)`. Note this is
-a Python-only concern — teams.ts matches with
-`new RegExp(pattern).test(activity.text)`, which already tolerates a leading
-mention.
 
 For every `msteams` turn the middleware checks whether `TEAMS_APP` has a
 matching route; if so it hands the activity to
@@ -141,3 +118,48 @@ ContextVar is unset and the helper raises `LookupError`.
    .venv\Scripts\python app.py
    ```
 6. Install the bot in Teams and send `help` — replies are prefixed `[Teams SDK]` (Teams SDK route) or `[Agent SDK]` (fallthrough to `AgentApplication`).
+
+## Multichannel: Teams, Web Chat, and Email
+
+`TeamsSDKMiddleware` routes to the teams.py `App` only when the activity is a Teams
+activity; every other channel passes straight through to the Agents SDK app. Teams alone
+can't show that half of the contract, so this sample is exercised on three channels.
+
+| | Teams | Web Chat / Direct Line | Email |
+| --- | --- | --- | --- |
+| `channel` | `channelId=msteams (… fell through)` | `channelId=directline (… passed through)` | `channelId=email (… passed through)` |
+| `help` | Adaptive Card via teams.py | plain-text help from the Agents SDK | plain-text help from the Agents SDK |
+| `quote`, `task`, `react`, `targeted` | handled by teams.py | no teams.py route → echoed | no teams.py route → echoed |
+| `agents sdk react` | uses the teams.py API client | politely declines — Teams-only API | politely declines — Teams-only API |
+| `agents sdk proactive` | uses the teams.py API client | works — see below | works — see below |
+
+### Web Chat / Direct Line
+
+Direct Line is already enabled on the Azure Bot registration, so there is nothing extra to
+provision. The repo ships a small harness at [`tools/webchat`](../../../tools/webchat) —
+a browser UI plus a scriptable CLI:
+
+```bash
+python tools/webchat/serve.py                       # http://localhost:3000
+python tools/webchat/dl_test.py help channel        # scripted, prints card contents too
+```
+
+### Email
+
+Enable the **Email** channel on the bot registration and point it at a mailbox. Two things differ from every other channel:
+
+- **`activity.text` is the message *body only*.** The subject arrives separately in
+  `channelData.Subject`, so commands must go in the body — a subject-line command is
+  invisible to the router.
+- **The body carries a signature and/or quoted thread.** This is why `_command()` anchors
+  matches to the *first line* rather than the whole body; without it, `help` followed by
+  "Sent from my iPhone" would never match. The echo fallthrough truncates to the first
+  line for the same reason.
+
+Adaptive Cards do not fail on email — Azure Bot Service renders them **server-side into a
+static image**. Display-only cards survive; a card with buttons becomes a painted, inert
+control. That is why `help` has a separate plain-text handler on the Agents SDK side.
+
+Mail sent to the bot mailbox from *outside* the tenant may be rejected on the reply leg, and
+the resulting non-delivery report arrives back as an ordinary `message` activity that the
+echo handler will answer. Send from an account in the same tenant to avoid this.
