@@ -6,10 +6,14 @@ import logging
 import re
 from os import environ, path
 
-from aiohttp import web
+from aiohttp import ClientSession, web
 from dotenv import load_dotenv
 
-from microsoft_agents.activity import load_configuration_from_env
+from microsoft_agents.activity import (
+    ActivityTypes,
+    Channels,
+    load_configuration_from_env,
+)
 from microsoft_agents.authentication.msal import MsalConnectionManager
 from microsoft_agents.hosting.aiohttp import (
     CloudAdapter,
@@ -19,15 +23,12 @@ from microsoft_agents.hosting.aiohttp import (
 from microsoft_agents.hosting.core import (
     AgentApplication,
     MemoryStorage,
+    RouteRank,
     TurnContext,
     TurnState,
 )
 from microsoft_agents.hosting.core.app import ApplicationOptions
 
-from teams_sdk import is_teams_channel, use_teams_sdk
-
-# teams.py — owns every Teams turn with a matching route
-from microsoft_teams.apps import ActivityContext
 from microsoft_teams.api import (
     MessageActivity,
     MessageActivityInput,
@@ -42,12 +43,16 @@ from microsoft_teams.api.clients.api_client import ApiClient
 from microsoft_teams.api.models.account import Account
 from microsoft_teams.api.models.attachment import AdaptiveCardAttachment, card_attachment
 from microsoft_teams.api.models.task_module import CardTaskModuleTaskInfo
+from microsoft_teams.apps import ActivityContext
+
+from teams_sdk import is_teams_channel, use_teams_sdk
 
 from cards import help_card, task_form_card, task_launcher_card
 
-
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("rfc-sample")
+
+GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
 
 
 def _command(name: str) -> re.Pattern[str]:
@@ -57,7 +62,8 @@ def _command(name: str) -> re.Pattern[str]:
         re.IGNORECASE | re.DOTALL,
     )
 
-# ──────────────────────────── Bootstrap ────────────────────────────
+
+# ═══════════════════════════════ Bootstrap ═══════════════════════════════
 
 load_dotenv(path.join(path.dirname(__file__), ".env"))
 agents_sdk_config = load_configuration_from_env(environ)
@@ -66,11 +72,21 @@ STORAGE = MemoryStorage()
 CONNECTION_MANAGER = MsalConnectionManager(**agents_sdk_config)
 ADAPTER = CloudAdapter(connection_manager=CONNECTION_MANAGER)
 
-# ─── Agents SDK side ──────────────────────────────────────────────
+# Auth handlers are configured in .env, not here:
+#   AGENTAPPLICATION__USERAUTHORIZATION__HANDLERS__<name>__SETTINGS__AZUREBOTOAUTHCONNECTIONNAME
+AUTH_HANDLER_IDS = tuple(
+    agents_sdk_config.get("AGENTAPPLICATION", {})
+    .get("USERAUTHORIZATION", {})
+    .get("HANDLERS", {})
+)
+
 AGENT_SDK_APP = AgentApplication[TurnState](
     options=ApplicationOptions(storage=STORAGE, adapter=ADAPTER),
     connection_manager=CONNECTION_MANAGER,
+    **agents_sdk_config,
 )
+
+TEAMS_APP = use_teams_sdk(AGENT_SDK_APP, CONNECTION_MANAGER)
 
 
 @AGENT_SDK_APP.error
@@ -79,14 +95,9 @@ async def _on_error(context: TurnContext, error: Exception):
     await context.send_activity(f"⚠️ {type(error).__name__}: {error}")
 
 
-# ─── teams.py side ────────────────────────────────────────────────
-# One call: extracts credentials from CONNECTION_MANAGER, wires teams.py's
-# outbound token callback to it, constructs the App, and installs
-# TeamsSDKMiddleware on AGENT_SDK_APP.adapter so Teams turns are short-circuited.
-TEAMS_APP = use_teams_sdk(AGENT_SDK_APP, CONNECTION_MANAGER)
+# ═══════════════════════ Teams SDK routes (teams.py) ═══════════════════════
+# Only reached on Teams, and only when the pattern matches.
 
-
-# ════════════════════ TEAMS_APP — Teams SDK feature showcase ════════════════════
 
 @TEAMS_APP.on_message_pattern(_command("help"))
 async def _help(ctx: ActivityContext[MessageActivity]):
@@ -96,7 +107,7 @@ async def _help(ctx: ActivityContext[MessageActivity]):
 
 @TEAMS_APP.on_message_pattern(_command("react"))
 async def _react(ctx: ActivityContext[MessageActivity]):
-    """Bot adds, then removes, an emoji reaction on its own message."""
+    """Add, then remove, an emoji reaction on the bot's own message."""
     response = await ctx.send("React to this message! I'll add 👍 and remove it.")
     conv_id = ctx.activity.conversation.id
     try:
@@ -109,35 +120,31 @@ async def _react(ctx: ActivityContext[MessageActivity]):
 
 @TEAMS_APP.on_message_pattern(_command("quote"))
 async def _quote(ctx: ActivityContext[MessageActivity]):
-    """Reply to the user's message with a quoted reply (auto-quotes inbound)."""
+    """Reply to the user's message with a quoted reply."""
     await ctx.reply("Quoting your message!")
 
 
 @TEAMS_APP.on_message_pattern(_command("targeted"))
 async def _targeted(ctx: ActivityContext[MessageActivity]):
-    """Send a targeted (ephemeral) message visible only to the sender."""
+    """Send an ephemeral message visible only to the sender."""
     sender = ctx.activity.from_
-    targeted_msg = (
-        MessageActivityInput(text="👁️ This message is only visible to you.")
-        .with_recipient(Account(id=sender.id, name=sender.name), is_targeted=True)
-    )
+    targeted_msg = MessageActivityInput(
+        text="👁️ This message is only visible to you."
+    ).with_recipient(Account(id=sender.id, name=sender.name), is_targeted=True)
     await ctx.send(targeted_msg)
 
 
 @TEAMS_APP.on_message_pattern(_command("task"))
 async def _task(ctx: ActivityContext[MessageActivity]):
-    """Send a card whose button opens a task module (task/fetch → task/submit)."""
+    """Send a card whose button opens a dialog (task/fetch → task/submit)."""
     await ctx.send(MessageActivityInput().add_card(task_launcher_card()))
 
-
-
-# ─── Task module handlers ─────────────────────────────────────────
 
 @TEAMS_APP.on_dialog_open
 async def _on_task_fetch(
     ctx: ActivityContext[TaskFetchInvokeActivity],
 ) -> TaskModuleInvokeResponse:
-    """task/fetch — return a task module continue with an adaptive card."""
+    """task/fetch — return a dialog containing an adaptive card."""
     return TaskModuleInvokeResponse(
         task=TaskModuleContinueResponse(
             value=CardTaskModuleTaskInfo(
@@ -158,28 +165,22 @@ async def _on_task_submit(
     return TaskModuleInvokeResponse(task=TaskModuleMessageResponse(value="Done."))
 
 
-# ─── Other Teams events ───────────────────────────────────────────
-
 @TEAMS_APP.on_message_reaction
 async def _on_message_reaction(ctx: ActivityContext[MessageReactionActivity]):
-    added = ctx.activity.reactions_added or []
-    removed = ctx.activity.reactions_removed or []
-    summary = (
-        f"added={[r.type for r in added]} removed={[r.type for r in removed]}"
-    )
-    await ctx.send(f"[Teams SDK] Reactions: {summary}")
+    added = [r.type for r in ctx.activity.reactions_added or []]
+    removed = [r.type for r in ctx.activity.reactions_removed or []]
+    await ctx.send(f"[Teams SDK] Reactions: added={added} removed={removed}")
 
 
-
-# ════════════════════ AGENT_SDK_APP — fallthrough + "agents sdk *" commands ════════════════════
-# These fire for Teams activities that have no matching teams.py route (TeamsSDKMiddleware
-# falls through) and for any non-Teams channel.
+# ═════════════════════ Agents SDK routes (AgentApplication) ═════════════════════
+# Reached for Teams turns with no matching teams.py route, and for every non-Teams channel.
 
 
 @AGENT_SDK_APP.message(_command("help"))
 async def _help_non_teams(context: TurnContext, _state: TurnState):
     await context.send_activity(
-        "[Agent SDK] Commands: help, channel, agents sdk react, agents sdk proactive.\n"
+        "[Agent SDK] Commands: help, channel, whoami, mail, signout, "
+        "agents sdk react, agents sdk proactive.\n"
         "Teams-only extras (react, quote, targeted, task) need the Teams SDK routes."
     )
 
@@ -198,7 +199,6 @@ async def _channel(context: TurnContext, _state: TurnState):
 
 @AGENT_SDK_APP.message(_command("agents sdk react"))
 async def _agents_sdk_react(context: TurnContext, _state: TurnState):
-
     if not is_teams_channel(context.activity):
         await context.send_activity(
             f"[Agent SDK] 'agents sdk react' needs the Teams reactions API; "
@@ -226,16 +226,136 @@ async def _agents_sdk_proactive(context: TurnContext, _state: TurnState):
     outgoing = MessageActivityInput().add_text(
         "[Teams SDK] Proactive message triggered from an Agents SDK handler!"
     )
+    # Bypassing teams.py's ActivitySender means nothing populates from_, and Direct Line
+    # rejects the send without it.
     outgoing.from_ = Account(id=bot.id, name=bot.name)
     await api.conversations.activities(conv_id).create(outgoing)
 
 
-@AGENT_SDK_APP.activity("message")
+# ═══════════════════════════ Authentication ═══════════════════════════
+# Auth lives here and not on the teams.py side: the auth intercept runs inside
+# AgentApplication.on_turn, which the middleware only calls when no teams.py route
+# matches. A teams.py route would run unauthenticated rather than fail.
+#
+# Both handlers use the same AAD app but different ABS connections, so each holds its own
+# token — signing in for one does not satisfy the other.
+
+
+async def _graph_get(context: TurnContext, handler: str, resource: str):
+    """GET a Graph resource with the token cached for `handler`. None on failure."""
+    token = await AGENT_SDK_APP.auth.get_token(context, handler)
+    if not token or not token.token:
+        await context.send_activity(f"[Agent SDK] No token for the '{handler}' handler.")
+        return None
+
+    headers = {"Authorization": f"Bearer {token.token}"}
+    async with ClientSession() as session:
+        async with session.get(f"{GRAPH_BASE_URL}{resource}", headers=headers) as resp:
+            body = await resp.json()
+            if resp.status != 200:
+                detail = body.get("error", {}).get("message", body)
+                await context.send_activity(
+                    f"[Agent SDK] Graph {resource} returned {resp.status}: {detail}"
+                )
+                return None
+            return body
+
+
+@AGENT_SDK_APP.message(_command("whoami"), auth_handlers=["graphuser"])
+async def _whoami(context: TurnContext, _state: TurnState):
+    # Sign-in already completed by the time this runs, so get_token reads from cache.
+    me = await _graph_get(context, "graphuser", "/me")
+    if me:
+        await context.send_activity(
+            f"[Agent SDK] {me.get('displayName')} ({me.get('userPrincipalName')})\n"
+            f"Handler 'graphuser' — scope User.Read."
+        )
+
+
+@AGENT_SDK_APP.message(_command("mail"), auth_handlers=["graphmail"])
+async def _mail(context: TurnContext, _state: TurnState):
+    data = await _graph_get(
+        context, "graphmail", "/me/messages?$top=3&$select=subject,receivedDateTime"
+    )
+    if data is None:
+        return
+    messages = data.get("value", [])
+    if not messages:
+        await context.send_activity("[Agent SDK] Mailbox is empty.")
+        return
+    lines = "\n".join(f"• {m.get('subject') or '(no subject)'}" for m in messages)
+    await context.send_activity(
+        f"[Agent SDK] Latest {len(messages)} message(s):\n{lines}\n"
+        f"Handler 'graphmail' — scopes User.Read + Mail.Read."
+    )
+
+
+@AGENT_SDK_APP.message(_command("signout"))
+async def _signout(context: TurnContext, _state: TurnState):
+    for handler in AUTH_HANDLER_IDS:
+        await AGENT_SDK_APP.auth.sign_out(context, handler)
+    await context.send_activity(f"[Agent SDK] Signed out of: {', '.join(AUTH_HANDLER_IDS)}.")
+
+
+# Every OAuth card is rendered with the same fixed "Sign in" text, so these callbacks are
+# the only way to tell which connection a prompt belonged to.
+async def _on_sign_in_success(context: TurnContext, _state: TurnState, handler_id=None):
+    await context.send_activity(f"[Agent SDK] Signed in via '{handler_id}'.")
+
+
+async def _on_sign_in_failure(context: TurnContext, _state: TurnState, handler_id=None):
+    await context.send_activity(f"[Agent SDK] Sign-in failed for '{handler_id}'.")
+
+
+AGENT_SDK_APP.auth.on_sign_in_success(_on_sign_in_success)
+AGENT_SDK_APP.auth.on_sign_in_failure(_on_sign_in_failure)
+
+
+# Sign-in cannot complete on email: Azure Bot Service flattens cards into a static image,
+# so the button is inert. A started flow would then swallow every later turn before
+# routing, leaving the mailbox silent. These routes outrank the two above and decline, so
+# no flow ever begins.
+#
+# signout is declined here too. Tokens are keyed by (channelId, userId, connectionName),
+# and the email identity (an SMTP address) never holds one, so signing out would always
+# report success for zero work — and could never reach a token held on Teams anyway.
+NO_AUTH_CHANNELS = {Channels.email}
+
+
+def _blocked_auth_selector(name: str):
+    pattern = _command(name)
+
+    def selector(context: TurnContext) -> bool:
+        return (
+            context.activity.type == ActivityTypes.message
+            and context.activity.channel_id in NO_AUTH_CHANNELS
+            and re.fullmatch(pattern, context.activity.text or "") is not None
+        )
+
+    return selector
+
+
+async def _decline_auth(context: TurnContext, _state: TurnState):
+    await context.send_activity(
+        f"[Agent SDK] Sign-in isn't supported on {context.activity.channel_id} — the OAuth "
+        "card renders as a static image here, so it can't be clicked. Tokens are scoped per "
+        "channel, so there is nothing to sign in or out of on this one. "
+        "Try whoami / mail on Teams or Web Chat."
+    )
+
+
+for _name in ("whoami", "mail", "signout"):
+    AGENT_SDK_APP.add_route(
+        _blocked_auth_selector(_name), _decline_auth, rank=RouteRank.FIRST
+    )
+
+
+# ═══════════════════════════ Fallthrough ═══════════════════════════
+
+
+@AGENT_SDK_APP.activity("message", rank=RouteRank.LAST)
 async def _echo(context: TurnContext, _state: TurnState):
-    """Fallthrough: no teams.py route and no command above matched."""
     text = (context.activity.text or "").strip()
-    # Email bodies carry a signature and/or quoted thread; echoing all of it
-    # back grows on every round trip.
     first_line = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
     if first_line != text:
         text = f"{first_line} […]"
@@ -244,7 +364,8 @@ async def _echo(context: TurnContext, _state: TurnState):
     )
 
 
-# ─────────────────────────── HTTP wiring ───────────────────────────
+# ═══════════════════════════ HTTP wiring ═══════════════════════════
+
 
 async def _entry_point(req: web.Request) -> web.Response:
     return await start_agent_process(req, req.app["agent_sdk_app"], req.app["adapter"])

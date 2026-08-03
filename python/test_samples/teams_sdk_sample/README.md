@@ -112,12 +112,90 @@ ContextVar is unset and the helper raises `LookupError`.
    TOKENVALIDATION__ENABLED=false                      # optional; skip JWT validation for local dev
    PORT=3978
    ```
+   For the sign-in demo, also add the OAuth handler entries shown under
+   [User authentication](#user-authentication-two-graph-connections).
 4. Start a dev tunnel pointing at `http://localhost:3978` and register/update a bot at `https://<tunnel>/api/messages` (e.g. `teams app create --name "..." --endpoint https://<tunnel>/api/messages --json`).
 5. Run the bot:
    ```bash
    .venv\Scripts\python app.py
    ```
 6. Install the bot in Teams and send `help` — replies are prefixed `[Teams SDK]` (Teams SDK route) or `[Agent SDK]` (fallthrough to `AgentApplication`).
+
+## User authentication (two Graph connections)
+
+`whoami` and `mail` both call Microsoft Graph, but through **separate OAuth connections** on the same AAD app:
+
+| Command | Handler | ABS connection | Scopes | Graph call |
+| --- | --- | --- | --- | --- |
+| `whoami` | `graphuser` | `graphuser` | `User.Read` | `/me` |
+| `mail` | `graphmail` | `graphmail` | `User.Read Mail.Read` | `/me/messages?$top=3` |
+
+Each handler keeps its **own token cache**, so signing in for `whoami` does not satisfy
+`mail` — the second command prompts its own sign-in, because `Mail.Read` was never consented
+on the first token. That is the point of the demo.
+
+Handlers are configured from the environment, not in code:
+
+```
+AGENTAPPLICATION__USERAUTHORIZATION__HANDLERS__graphuser__SETTINGS__AZUREBOTOAUTHCONNECTIONNAME=graphuser
+AGENTAPPLICATION__USERAUTHORIZATION__HANDLERS__graphmail__SETTINGS__AZUREBOTOAUTHCONNECTIONNAME=graphmail
+```
+
+`app.py` forwards these by passing `**agents_sdk_config` into `AgentApplication`. `__TYPE` is
+optional — `auth_type` defaults to `UserAuthorization`.
+
+Provision each connection with a matching scope string:
+
+```bash
+az bot authsetting create --name <bot> --resource-group <rg> --setting-name graphmail \
+  --client-id <aad-app> --client-secret <secret> --service Aadv2 \
+  --provider-scope-string "User.Read Mail.Read" --parameters tenantId=<tenant>
+```
+
+### Auth only works on the Agents SDK side
+
+`TeamsSDKMiddleware` calls `logic()` — the Agents SDK `on_turn` — only when no teams.py route
+matches. The auth intercept lives *inside* that `on_turn`, so:
+
+**a teams.py route can never be auth-protected.** It would not error; it would run
+unauthenticated. `whoami` and `mail` are deliberately Agents SDK routes.
+
+There is a second, sharper edge here. teams.py registers `signin/tokenExchange`,
+`signin/verifyState` and `signin/failure` handlers *unconditionally* when the `App` is
+constructed, so `router.select_handlers()` always matches them — including for a flow that
+`AgentApplication` started. Those handlers verify against teams.py's own
+`default_connection_name`, which defaults to `"graph"`. Left alone this means:
+
+- the Agents SDK never learns its sign-in completed, so the command never replays, and
+- if no ABS connection named `graph` exists, the lookup 404s and Teams reports
+  **"unable to reach app"**.
+
+The middleware therefore passes every `signin/*` invoke straight through to
+`AgentApplication`, which owns authorization. If you want teams.py to own sign-in instead,
+set `default_connection_name` on the teams.py `App` and remove that passthrough.
+
+### Channel support
+
+| Channel | Sign-in |
+| --- | --- |
+| Teams | works — native OAuth card |
+| Web Chat / Direct Line | works — sign-in link, then the original command replays |
+| Email | **not supported** — declined up front |
+
+Email is refused deliberately. Azure Bot Service flattens cards into a static image, so the
+OAuth button is inert and the flow can never complete. Worse, once a flow is pending the auth
+intercept swallows every later turn *before routing*, so the mailbox would go silent and even
+`signout` could not recover it. Three higher-ranked routes (`RouteRank.FIRST`) match `whoami`,
+`mail`, and `signout` on the email channel and decline before any flow starts.
+
+`signout` is declined on email for a second reason: tokens are keyed by
+`(channelId, userId, connectionName)`, and the email identity is an SMTP address — a separate
+identity space from the Teams `29:…` id. That identity never holds a token, so signing out
+there would report success for zero work and could never reach a token held on Teams.
+
+The same "pending flow swallows everything" behaviour applies on any channel: abandon a
+sign-in card and that user goes quiet until the flow expires. Restarting clears it, since the
+sample uses `MemoryStorage`.
 
 ## Multichannel: Teams, Web Chat, and Email
 
@@ -132,6 +210,8 @@ can't show that half of the contract, so this sample is exercised on three chann
 | `quote`, `task`, `react`, `targeted` | handled by teams.py | no teams.py route → echoed | no teams.py route → echoed |
 | `agents sdk react` | uses the teams.py API client | politely declines — Teams-only API | politely declines — Teams-only API |
 | `agents sdk proactive` | uses the teams.py API client | works — see below | works — see below |
+| `whoami`, `mail` | sign-in via OAuth card | sign-in via OAuth card | declined — see [User authentication](#user-authentication-two-graph-connections) |
+| `signout` | clears both handlers | clears both handlers | declined — nothing is ever signed in here |
 
 ### Web Chat / Direct Line
 

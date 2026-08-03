@@ -4,8 +4,9 @@ Middleware that matches Teams turns to a teams.py App.
 Lifecycle of a turn:
 
     1. Non-Teams channel → pass through to AgentApplication.
-    2. Teams turn with no matching teams.py route → pass through too.
-    3. Teams turn with a match → ensure teams.py is initialized, expose the
+    2. Teams ``signin/*`` invoke → pass through; AgentApplication owns authorization.
+    3. Teams turn with no matching teams.py route → pass through too.
+    4. Teams turn with a match → ensure teams.py is initialized, expose the
        Agents SDK TurnContext via a ContextVar, hand the activity to
        teams.py's activity_processor, then propagate any InvokeResponse
        back through the Agents SDK send pipeline so the HTTP layer can
@@ -32,6 +33,13 @@ from ._context import _agent_sdk_turn_context
 from ._token import _TeamsSDKToken
 
 TEAMS_CHANNEL_ID = "msteams"
+_AGENT_SDK_OWNED_INVOKE_PREFIX = "signin/"
+
+
+def _is_agent_sdk_owned_invoke(activity) -> bool:
+    return activity.type == ActivityTypes.invoke and (activity.name or "").startswith(
+        _AGENT_SDK_OWNED_INVOKE_PREFIX
+    )
 
 
 def is_teams_channel(activity) -> bool:
@@ -67,6 +75,10 @@ class TeamsSDKMiddleware(Middleware):
         # (e.g. ``TEAMS_APP.send`` for proactive sends) even when no teams.py
         # route matched this turn.
         await self._teams_app.initialize()
+
+        if _is_agent_sdk_owned_invoke(context.activity):
+            await logic(context)
+            return
 
         if not self._teams_app.router.select_handlers(core_activity):
             # No teams.py route matches; let AgentApplication try its handlers.
