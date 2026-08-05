@@ -84,16 +84,16 @@ public class TeamsSdkMiddleware : IMiddleware
 
     private readonly TeamsBotApplication _teamsBot;
     private readonly ILogger<TeamsSdkMiddleware> _logger;
-    private readonly Func<ITurnContext, bool>? _teamsRouteSelector;
+    private readonly Func<ITurnContext, bool>? _shouldBypassTeams;
 
     public TeamsSdkMiddleware(
         TeamsBotApplication teamsBot,
         ILogger<TeamsSdkMiddleware> logger,
-        Func<ITurnContext, bool>? teamsRouteSelector = null)
+        Func<ITurnContext, bool>? shouldBypassTeams = null)
     {
         _teamsBot = teamsBot ?? throw new ArgumentNullException(nameof(teamsBot));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        _teamsRouteSelector = teamsRouteSelector;
+        _shouldBypassTeams = shouldBypassTeams;
     }
 
     public async Task OnTurnAsync(ITurnContext turnContext, NextDelegate next, CancellationToken cancellationToken = default)
@@ -105,10 +105,10 @@ public class TeamsSdkMiddleware : IMiddleware
             // Activity Protocol wire format, so the conversion is lossless.
             string activityJson = ProtocolJsonSerializer.ToJson(turnContext.Activity);
 
-            if (_teamsRouteSelector is not null && !_teamsRouteSelector(turnContext))
+            if (_shouldBypassTeams is not null && _shouldBypassTeams(turnContext))
             {
                 _logger.LogDebug(
-                    "TeamsSdkMiddleware: custom Teams route selector rejected activity {ActivityId}, falling through to Agent SDK",
+                    "TeamsSdkMiddleware: custom Teams bypass routed activity {ActivityId} to Agent SDK",
                     turnContext.Activity.Id);
                 await next(cancellationToken);
                 return;

@@ -220,7 +220,7 @@ public class MyTeamsBot : TeamsBotApplication
 2. **Builds the Teams SDK clients** (`ConversationClient`, `UserTokenClient`, `ApiClient`) on top of that authenticated `HttpClient`.
 3. **Registers your `TeamsBotApplication` subclass** as a singleton (and under the base `TeamsBotApplication` type) so the middleware can resolve it.
 4. **Installs the routing middleware.** It registers `TeamsSdkMiddleware` as an Agents SDK `IMiddleware` and the `IMiddleware[]` the `CloudAdapter` consumes — so you don't wire the pipeline by hand.
-5. **Optionally lets you veto Teams routing per activity.** `AddTeamsSdk<T>(teamsRouteSelector: ...)` can apply extra checks for Teams-channel activities before a matching Teams route is allowed to run. The current sample uses that hook to keep `signin/*` invokes on the Agents SDK side.
+5. **Optionally lets you bypass Teams routing per activity.** `AddTeamsSdk<T>(shouldBypassTeams: ...)` can force a Teams-channel activity to fall through to the Agents SDK before a matching Teams route is allowed to run. The current sample uses that hook to keep `signin/*` invokes on the Agents SDK side.
 
 Everything else — your `AgentApplicationOptions`, `CloudAdapter`, storage, error handlers, message handlers, auth handlers, ASP.NET host — stays exactly as it is. The Agents SDK is still your hosting layer.
 

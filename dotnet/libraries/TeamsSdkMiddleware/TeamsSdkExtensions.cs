@@ -38,14 +38,14 @@ public static class TeamsSdkExtensions
     /// This is the only call needed — see <c>Program.cs</c>.
     /// </summary>
     /// <typeparam name="T">A <see cref="TeamsBotApplication"/> subclass.</typeparam>
-    /// <param name="teamsRouteSelector">
+    /// <param name="shouldBypassTeams">
     /// Optional extra predicate evaluated only for Teams-channel activities. Return
-    /// <see langword="false"/> to force the turn to
+    /// <see langword="true"/> to bypass Teams routing and force the turn to
     /// fall through to the Agents SDK even when the Teams SDK has a matching route.
     /// </param>
     public static IServiceCollection AddTeamsSdk<T>(
         this IServiceCollection services,
-        Func<ITurnContext, bool>? teamsRouteSelector = null)
+        Func<ITurnContext, bool>? shouldBypassTeams = null)
         where T : TeamsBotApplication
     {
         // TeamsBotApplication depends on IHttpContextAccessor for its own request-scoped behavior.
@@ -100,7 +100,7 @@ public static class TeamsSdkExtensions
             new TeamsSdkMiddleware(
                 sp.GetRequiredService<TeamsBotApplication>(),
                 sp.GetRequiredService<ILogger<TeamsSdkMiddleware>>(),
-                teamsRouteSelector));
+                shouldBypassTeams));
         services.AddSingleton<Microsoft.Agents.Builder.IMiddleware[]>(
             sp => sp.GetServices<Microsoft.Agents.Builder.IMiddleware>().ToArray());
 

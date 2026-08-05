@@ -24,12 +24,11 @@ builder.Services.AddAgentAspNetAuthentication(builder.Configuration);
 // ── Teams SDK ──────────────────────────────────────────────────────
 // One call: registers MyTeamsBot + its Teams API/auth chain (via AgentSdkAuthHandler)
 // and installs the routing middleware on the CloudAdapter pipeline. This sample
-// keeps signin/* invokes on the Agents SDK side by rejecting them in the optional
-// Teams route selector.
-builder.Services.AddTeamsSdk<MyTeamsBot>(turnContext =>
-    turnContext.Activity.Type != ActivityTypes.Invoke
-    || string.IsNullOrEmpty(turnContext.Activity.Name)
-    || !turnContext.Activity.Name.StartsWith("signin/", StringComparison.OrdinalIgnoreCase));
+// keeps signin/* invokes on the Agents SDK side by bypassing Teams routing for them.
+builder.Services.AddTeamsSdk<MyTeamsBot>(shouldBypassTeams: turnContext =>
+    turnContext.Activity.Type == ActivityTypes.Invoke
+    && !string.IsNullOrEmpty(turnContext.Activity.Name)
+    && turnContext.Activity.Name.StartsWith("signin/", StringComparison.OrdinalIgnoreCase));
 
 WebApplication app = builder.Build();
 

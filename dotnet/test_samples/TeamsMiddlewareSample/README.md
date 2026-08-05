@@ -12,10 +12,10 @@ This sample now mirrors the multichannel shape from PR #3:
 builder.AddAgent<MyAgent>();
 builder.Services.AddSingleton<IStorage, MemoryStorage>();
 builder.Services.AddAgentAspNetAuthentication(builder.Configuration);
-builder.Services.AddTeamsSdk<MyTeamsBot>(turnContext =>
-    turnContext.Activity.Type != ActivityTypes.Invoke
-    || string.IsNullOrEmpty(turnContext.Activity.Name)
-    || !turnContext.Activity.Name.StartsWith("signin/", StringComparison.OrdinalIgnoreCase));
+builder.Services.AddTeamsSdk<MyTeamsBot>(shouldBypassTeams: turnContext =>
+    turnContext.Activity.Type == ActivityTypes.Invoke
+    && !string.IsNullOrEmpty(turnContext.Activity.Name)
+    && turnContext.Activity.Name.StartsWith("signin/", StringComparison.OrdinalIgnoreCase));
 ```
 
 `AddTeamsSdk<MyTeamsBot>()` is the only integration call. It registers the Teams SDK bot,
@@ -23,7 +23,7 @@ bridges outbound auth through the Agents SDK connection manager plus the ambient
 turn context, and installs the middleware that decides whether a turn stays in the Agents SDK
 or is handed to the Teams SDK.
 
-The optional selector runs only for Teams-channel activities and can force a fallthrough to
+The optional bypass runs only for Teams-channel activities and can force a fallthrough to
 the Agents SDK even when the Teams SDK has a matching route. This sample uses it to keep
 `signin/*` invokes owned by the Agents SDK auth pipeline instead of the Teams SDK.
 
