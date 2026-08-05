@@ -86,7 +86,25 @@ AGENT_SDK_APP = AgentApplication[TurnState](
     **agents_sdk_config,
 )
 
-TEAMS_APP = use_teams_sdk(AGENT_SDK_APP, CONNECTION_MANAGER)
+def _agent_sdk_owns_signin(context: TurnContext) -> bool:
+    """Keep ``signin/*`` invokes on the Agents SDK side.
+
+    teams.py registers ``signin/tokenExchange``, ``signin/verifyState`` and
+    ``signin/failure`` handlers unconditionally when the ``App`` is constructed, so
+    ``router.select_handlers()`` always matches them — including for a flow that
+    ``AgentApplication`` started. Those handlers verify against teams.py's own
+    ``default_connection_name`` (default ``"graph"``), so letting them win would strand
+    the Agents SDK flow and 404 when no ABS connection named ``graph`` exists.
+
+    Drop this predicate if you want teams.py to own sign-in instead.
+    """
+    activity = context.activity
+    return activity.type == ActivityTypes.invoke and (
+        activity.name or ""
+    ).lower().startswith("signin/")
+
+
+TEAMS_APP = use_teams_sdk(AGENT_SDK_APP, CONNECTION_MANAGER, _agent_sdk_owns_signin)
 
 
 @AGENT_SDK_APP.error

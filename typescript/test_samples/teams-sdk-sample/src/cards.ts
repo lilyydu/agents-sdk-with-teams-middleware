@@ -35,6 +35,7 @@ export function helpCard() {
         facts: [
           { title: 'agents sdk react', value: "Reach teams.ts's API client from an Agents SDK handler" },
           { title: 'agents sdk proactive', value: 'Trigger a proactive send from an Agents SDK handler' },
+          { title: 'channel', value: 'Report the channel this turn arrived on and how it was routed' },
           { title: 'anything else', value: "Echo via Agents SDK '[Agent SDK] You said: ...'" },
         ],
       },

@@ -15,13 +15,18 @@ the core piece is the middleware.
 ## Layout
 
 Each language tree has the same `libraries/` (the reusable bridge) + `test_samples/`
-(a runnable sample) split:
+(runnable samples) split:
 
-| | Library (bridge) | Sample |
-|---|---|---|
-| **python/** | `libraries/teams_sdk` | `test_samples/teams_sdk_sample` |
-| **typescript/** | `libraries/teams-sdk-middleware` | `test_samples/teams-sdk-sample` |
-| **dotnet/** | `libraries/TeamsSdkMiddleware` | `test_samples/TeamsMiddlewareSample` |
+| | Library (bridge) | Middleware sample | Vanilla sample |
+|---|---|---|---|
+| **python/** | `libraries/teams_sdk` | `test_samples/teams_sdk_sample` | `test_samples/teams_sdk_vanilla` |
+| **typescript/** | `libraries/teams-sdk-middleware` | `test_samples/teams-sdk-sample` | `test_samples/teams-sdk-vanilla` |
+| **dotnet/** | `libraries/TeamsSdkMiddleware` | `test_samples/TeamsMiddlewareSample` | — |
+
+The **middleware** samples run an `AgentApplication` with the Teams SDK mounted through
+the bridge, so both routers are live at once. The **vanilla** samples are the control
+group: plain Teams SDK, no Agents SDK and no middleware. Run the same command against
+both to see exactly what the bridge adds — and what it leaves untouched.
 
 `tools/webchat/` is language-agnostic: a small Web Chat / Direct Line harness for
 exercising whichever sample is currently bound to the bot endpoint on a **non-Teams**

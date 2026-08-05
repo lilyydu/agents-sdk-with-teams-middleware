@@ -170,9 +170,22 @@ constructed, so `router.select_handlers()` always matches them — including for
 - if no ABS connection named `graph` exists, the lookup 404s and Teams reports
   **"unable to reach app"**.
 
-The middleware therefore passes every `signin/*` invoke straight through to
-`AgentApplication`, which owns authorization. If you want teams.py to own sign-in instead,
-set `default_connection_name` on the teams.py `App` and remove that passthrough.
+The middleware therefore takes an optional `should_bypass_teams` predicate, evaluated only
+for Teams turns, that forces a fall-through even when teams.py has a matching route. The
+sample passes one that claims every `signin/*` invoke for `AgentApplication`:
+
+```python
+def _agent_sdk_owns_signin(context: TurnContext) -> bool:
+    return context.activity.type == ActivityTypes.invoke and (
+        context.activity.name or ""
+    ).lower().startswith("signin/")
+
+
+TEAMS_APP = use_teams_sdk(AGENT_SDK_APP, CONNECTION_MANAGER, _agent_sdk_owns_signin)
+```
+
+Drop the predicate if you want teams.py to own sign-in instead, and set
+`default_connection_name` on the teams.py `App`.
 
 ### Channel support
 
