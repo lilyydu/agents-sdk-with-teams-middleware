@@ -67,7 +67,8 @@ public static class TeamsSdkExtensions
             return new ApiClient(
                 httpClient,
                 sp.GetRequiredService<ConversationClient>(),
-                sp.GetRequiredService<UserTokenClient>());
+                sp.GetRequiredService<UserTokenClient>(),
+                sp.GetRequiredService<ILogger<ApiClient>>());
         });
 
         services.AddSingleton<T>(sp => (T)ActivatorUtilities.CreateInstance(sp, typeof(T)));

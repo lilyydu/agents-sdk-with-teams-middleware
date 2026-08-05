@@ -29,13 +29,34 @@ namespace TeamsSdk;
 /// </remarks>
 public class TeamsSdkMiddleware : IMiddleware
 {
-    /// <summary>
-    /// The Agent SDK <see cref="ITurnContext"/> for the current turn.
+    private const string AgentSdkOwnedInvokePrefix = "signin/";
+   /// <summary>
+   /// The Agent SDK <see cref="ITurnContext"/> for the current turn.
     /// Uses <see cref="AsyncLocal{T}"/> so it flows within the same async context
     /// regardless of which thread the turn executes on (non-invoke activities are
     /// processed on a background thread where HttpContext is unavailable).
     /// </summary>
     public static ITurnContext? CurrentTurnContext => _currentTurnContext.Value;
+
+    /// <summary>
+    /// True for Teams turns, including Teams sub-channels such as <c>msteams:COPILOT</c>.
+    /// </summary>
+    public static bool IsTeamsChannel(IActivity activity)
+    {
+        string? channelId = activity.ChannelId?.ToString();
+        if (string.IsNullOrWhiteSpace(channelId))
+        {
+            return false;
+        }
+
+        int separatorIndex = channelId.IndexOf(':');
+        if (separatorIndex >= 0)
+        {
+            channelId = channelId[..separatorIndex];
+        }
+
+        return string.Equals(channelId, Channels.Msteams.ToString(), StringComparison.OrdinalIgnoreCase);
+    }
 
     /// <summary>
     /// Returns the Agent SDK <see cref="ITurnContext"/> for the current turn, throwing if
@@ -73,12 +94,19 @@ public class TeamsSdkMiddleware : IMiddleware
 
     public async Task OnTurnAsync(ITurnContext turnContext, NextDelegate next, CancellationToken cancellationToken = default)
     {
-        if (turnContext.Activity.ChannelId == Channels.Msteams)
+        if (IsTeamsChannel(turnContext.Activity))
         {
             // Bridge: serialize the Agent SDK IActivity to JSON, then deserialize
             // into the Teams SDK activity model.  Both SDKs implement the same
             // Activity Protocol wire format, so the conversion is lossless.
             string activityJson = ProtocolJsonSerializer.ToJson(turnContext.Activity);
+
+            if (IsAgentSdkOwnedInvoke(turnContext.Activity))
+            {
+                _logger.LogDebug("TeamsSdkMiddleware: passing Agent SDK-owned invoke {ActivityName} through to Agent SDK", turnContext.Activity.Name);
+                await next(cancellationToken);
+                return;
+            }
 
             // HasMatchingRoute calls TeamsActivity.FromActivity which mutates the
             // CoreActivity (Extract removes entries from Properties). Deserialize a
@@ -137,4 +165,9 @@ public class TeamsSdkMiddleware : IMiddleware
         // Non-Teams channels (or unmatched Teams activities) continue to the Agent SDK pipeline.
         await next(cancellationToken);
     }
+
+    private static bool IsAgentSdkOwnedInvoke(IActivity activity)
+        => activity.Type == ActivityTypes.Invoke
+           && !string.IsNullOrEmpty(activity.Name)
+           && activity.Name.StartsWith(AgentSdkOwnedInvokePrefix, StringComparison.OrdinalIgnoreCase);
 }
