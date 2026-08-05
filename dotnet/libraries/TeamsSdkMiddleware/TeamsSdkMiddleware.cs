@@ -29,8 +29,7 @@ namespace TeamsSdk;
 /// </remarks>
 public class TeamsSdkMiddleware : IMiddleware
 {
-    private const string AgentSdkOwnedInvokePrefix = "signin/";
-   /// <summary>
+    /// <summary>
    /// The Agent SDK <see cref="ITurnContext"/> for the current turn.
     /// Uses <see cref="AsyncLocal{T}"/> so it flows within the same async context
     /// regardless of which thread the turn executes on (non-invoke activities are
@@ -85,11 +84,16 @@ public class TeamsSdkMiddleware : IMiddleware
 
     private readonly TeamsBotApplication _teamsBot;
     private readonly ILogger<TeamsSdkMiddleware> _logger;
+    private readonly Func<ITurnContext, bool>? _teamsRouteSelector;
 
-    public TeamsSdkMiddleware(TeamsBotApplication teamsBot, ILogger<TeamsSdkMiddleware> logger)
+    public TeamsSdkMiddleware(
+        TeamsBotApplication teamsBot,
+        ILogger<TeamsSdkMiddleware> logger,
+        Func<ITurnContext, bool>? teamsRouteSelector = null)
     {
         _teamsBot = teamsBot ?? throw new ArgumentNullException(nameof(teamsBot));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _teamsRouteSelector = teamsRouteSelector;
     }
 
     public async Task OnTurnAsync(ITurnContext turnContext, NextDelegate next, CancellationToken cancellationToken = default)
@@ -101,9 +105,11 @@ public class TeamsSdkMiddleware : IMiddleware
             // Activity Protocol wire format, so the conversion is lossless.
             string activityJson = ProtocolJsonSerializer.ToJson(turnContext.Activity);
 
-            if (IsAgentSdkOwnedInvoke(turnContext.Activity))
+            if (_teamsRouteSelector is not null && !_teamsRouteSelector(turnContext))
             {
-                _logger.LogDebug("TeamsSdkMiddleware: passing Agent SDK-owned invoke {ActivityName} through to Agent SDK", turnContext.Activity.Name);
+                _logger.LogDebug(
+                    "TeamsSdkMiddleware: custom Teams route selector rejected activity {ActivityId}, falling through to Agent SDK",
+                    turnContext.Activity.Id);
                 await next(cancellationToken);
                 return;
             }
@@ -128,31 +134,40 @@ public class TeamsSdkMiddleware : IMiddleware
                 // HttpContext is unavailable, so we use an AsyncLocal that flows
                 // within the same async context regardless of thread.  Handlers
                 // access it via TeamsSdkMiddleware.CurrentTurnContext.
+                ITurnContext? previousTurnContext = _currentTurnContext.Value;
                 _currentTurnContext.Value = turnContext;
 
-                if (turnContext.Activity.Type == ActivityTypes.Invoke)
+                TeamsInvokeResponse? invokeResponse = null;
+                try
                 {
-                    // Invoke activities require special handling: Teams SDK returns an
-                    // InvokeResponse that must be bridged into Agent SDK's StackState
-                    // so that ProcessTurnResults can write the correct HTTP response.
-                    // Using ProcessInvokeAsync avoids the double-write conflict that
-                    // occurs when OnActivity writes directly to HttpContext.Response.
-                    TeamsInvokeResponse invokeResponse = await _teamsBot.ProcessInvokeAsync(coreActivity, cancellationToken);
-
-                    if (invokeResponse is not null)
+                    if (turnContext.Activity.Type == ActivityTypes.Invoke)
                     {
-                        var responseActivity = Activity.CreateInvokeResponseActivity(invokeResponse.Body, invokeResponse.Status);
-                        await turnContext.SendActivityAsync((Activity)responseActivity, cancellationToken);
+                        // Invoke activities require special handling: Teams SDK returns an
+                        // InvokeResponse that must be bridged into Agent SDK's StackState
+                        // so that ProcessTurnResults can write the correct HTTP response.
+                        // Using ProcessInvokeAsync avoids the double-write conflict that
+                        // occurs when OnActivity writes directly to HttpContext.Response.
+                        invokeResponse = await _teamsBot.ProcessInvokeAsync(coreActivity, cancellationToken);
+                    }
+                    else
+                    {
+                        // Non-invoke activities: use the standard OnActivity delegate which
+                        // sends responses via ConversationClient.
+                        if (_teamsBot.OnActivity != null)
+                        {
+                            await _teamsBot.OnActivity(coreActivity, cancellationToken);
+                        }
                     }
                 }
-                else
+                finally
                 {
-                    // Non-invoke activities: use the standard OnActivity delegate which
-                    // sends responses via ConversationClient.
-                    if (_teamsBot.OnActivity != null)
-                    {
-                        await _teamsBot.OnActivity(coreActivity, cancellationToken);
-                    }
+                    _currentTurnContext.Value = previousTurnContext;
+                }
+
+                if (invokeResponse is not null)
+                {
+                    var responseActivity = Activity.CreateInvokeResponseActivity(invokeResponse.Body, invokeResponse.Status);
+                    await turnContext.SendActivityAsync((Activity)responseActivity, cancellationToken);
                 }
 
                 // Short-circuit: do NOT call next() — Teams SDK handled this activity.
@@ -165,9 +180,4 @@ public class TeamsSdkMiddleware : IMiddleware
         // Non-Teams channels (or unmatched Teams activities) continue to the Agent SDK pipeline.
         await next(cancellationToken);
     }
-
-    private static bool IsAgentSdkOwnedInvoke(IActivity activity)
-        => activity.Type == ActivityTypes.Invoke
-           && !string.IsNullOrEmpty(activity.Name)
-           && activity.Name.StartsWith(AgentSdkOwnedInvokePrefix, StringComparison.OrdinalIgnoreCase);
 }

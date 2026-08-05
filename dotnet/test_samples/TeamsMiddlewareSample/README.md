@@ -12,12 +12,20 @@ This sample now mirrors the multichannel shape from PR #3:
 builder.AddAgent<MyAgent>();
 builder.Services.AddSingleton<IStorage, MemoryStorage>();
 builder.Services.AddAgentAspNetAuthentication(builder.Configuration);
-builder.Services.AddTeamsSdk<MyTeamsBot>();
+builder.Services.AddTeamsSdk<MyTeamsBot>(turnContext =>
+    turnContext.Activity.Type != ActivityTypes.Invoke
+    || string.IsNullOrEmpty(turnContext.Activity.Name)
+    || !turnContext.Activity.Name.StartsWith("signin/", StringComparison.OrdinalIgnoreCase));
 ```
 
 `AddTeamsSdk<MyTeamsBot>()` is the only integration call. It registers the Teams SDK bot,
-bridges outbound auth through the Agents SDK connection manager, and installs the middleware
-that decides whether a turn stays in the Agents SDK or is handed to the Teams SDK.
+bridges outbound auth through the Agents SDK connection manager plus the ambient Agents SDK
+turn context, and installs the middleware that decides whether a turn stays in the Agents SDK
+or is handed to the Teams SDK.
+
+The optional selector runs only for Teams-channel activities and can force a fallthrough to
+the Agents SDK even when the Teams SDK has a matching route. This sample uses it to keep
+`signin/*` invokes owned by the Agents SDK auth pipeline instead of the Teams SDK.
 
 ## Route split
 
@@ -155,13 +163,13 @@ Once enabled, expect auth commands on email to be declined with the channel-spec
 | Teams chat | `task` | Teams SDK | Task module button, fetch, submit |
 | Teams chat | react to bot message | Teams SDK | Reaction event summary |
 | Teams chat | `channel` | Agents SDK | Reports `msteams` / subchannel |
-| Teams chat | `whoami` | Agents SDK + OAuth | Graph-backed user identity |
-| Teams chat | `mail` | Agents SDK + OAuth | Graph mail summary |
+| Teams chat | `whoami` | Agents SDK + OAuth | Sign-in confirmation, then Graph-backed user identity |
+| Teams chat | `mail` | Agents SDK + OAuth | Sign-in confirmation, then Graph mail summary |
 | Teams chat | `signout` | Agents SDK + OAuth | Sign-out confirmation |
 | Teams chat | any other text | Agents SDK | `[Agent SDK]` echo |
 | Web Chat / Direct Line | `help` | Agents SDK | Text help for non-Teams commands |
 | Web Chat / Direct Line | `agents sdk react` | Agents SDK via Teams API client | Explains that the reactions API is unavailable on Direct Line |
 | Web Chat / Direct Line | `agents sdk proactive` | Agents SDK via Teams API client | Sends a second message created through the Teams API client |
-| Web Chat / Direct Line | `mail` / `whoami` | Agents SDK + OAuth | Auth prompt or Graph result, depending on channel support |
+| Web Chat / Direct Line | `mail` / `whoami` | Agents SDK + OAuth | Auth prompt or sign-in confirmation plus Graph result, depending on channel support |
 | Email | `help` | Agents SDK | First-line help text |
 | Email | `whoami` / `mail` / `signout` | Agents SDK | Auth declined with email-specific explanation |

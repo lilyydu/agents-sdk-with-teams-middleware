@@ -7,7 +7,6 @@ using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Authentication;
-using Microsoft.AspNetCore.Http;
 
 namespace TeamsSdk;
 
@@ -18,11 +17,9 @@ namespace TeamsSdk;
 /// sends authenticated requests without a separate AzureAd config section.
 /// </summary>
 internal class AgentSdkAuthHandler(
-    IConnections connections,
-    IHttpContextAccessor httpContextAccessor) : DelegatingHandler
+    IConnections connections) : DelegatingHandler
 {
     private readonly IConnections _connections = connections;
-    private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
 
     /// <inheritdoc/>
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -44,7 +41,7 @@ internal class AgentSdkAuthHandler(
     private IAccessTokenProvider GetTokenProvider(System.Uri requestUri)
     {
         string serviceUrl = requestUri.GetLeftPart(System.UriPartial.Authority);
-        var claimsIdentity = _httpContextAccessor.HttpContext?.User?.Identity as ClaimsIdentity;
+        ClaimsIdentity? claimsIdentity = TeamsSdkMiddleware.CurrentTurnContext?.Identity;
 
         if (claimsIdentity?.IsAuthenticated == true)
         {

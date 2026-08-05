@@ -149,7 +149,7 @@ public class MyAgent : AgentApplication
             : "(no upn)";
 
         await turnContext.SendActivityAsync(
-            $"[Agent SDK] {displayName} ({userPrincipalName})\nHandler 'graphuser' - scope User.Read.",
+            $"[Agent SDK] Signed in via 'graphuser'.\n[Agent SDK] {displayName} ({userPrincipalName})\nHandler 'graphuser' - scope User.Read.",
             cancellationToken: cancellationToken);
     }
 
@@ -181,7 +181,7 @@ public class MyAgent : AgentApplication
         }
 
         await turnContext.SendActivityAsync(
-            $"[Agent SDK] Latest {lines.Count} message(s):\n{string.Join('\n', lines)}\nHandler 'graphmail' - scopes User.Read + Mail.Read.",
+            $"[Agent SDK] Signed in via 'graphmail'.\n[Agent SDK] Latest {lines.Count} message(s):\n{string.Join('\n', lines)}\nHandler 'graphmail' - scopes User.Read + Mail.Read.",
             cancellationToken: cancellationToken);
     }
 

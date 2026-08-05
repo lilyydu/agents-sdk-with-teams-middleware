@@ -87,7 +87,7 @@ CloudAdapter ── IMiddleware[] includes TeamsSdkMiddleware
                 ├─ _teamsBot.HasMatchingRoute(activity)?
                 │     ├─ yes →  invoke  → ProcessInvokeAsync → bridge InvokeResponse to Agents SDK send pipeline
                 │     │         other  → _teamsBot.OnActivity(activity)
-                │     │         then  return  (short-circuit; do NOT call next())
+                │     │         finally restore AsyncLocal → return  (short-circuit; do NOT call next())
                 │     └─ no  →  await next()  → AgentApplication handlers run as usual
 ```
 
@@ -216,9 +216,11 @@ public class MyTeamsBot : TeamsBotApplication
 `AddTeamsSdk<T>()` (in `TeamsSdkExtensions.cs`) does the wiring:
 
 1. **Reuses Agent SDK auth.** It registers an `AgentSdkAuthHandler` (a `DelegatingHandler`) on a named `HttpClient`, so outbound Teams SDK calls acquire Bearer tokens via the Agent SDK's `IConnections` / `IAccessTokenProvider` — the same `clientId` / `tenantId` your Agents SDK app is already configured with. No separate `AzureAd` config section.
+   The current bridge selects the per-turn provider from `TeamsSdkMiddleware.CurrentTurnContext?.Identity` and falls back to the default connection outside a turn; it does not depend on `IHttpContextAccessor` for outbound auth.
 2. **Builds the Teams SDK clients** (`ConversationClient`, `UserTokenClient`, `ApiClient`) on top of that authenticated `HttpClient`.
 3. **Registers your `TeamsBotApplication` subclass** as a singleton (and under the base `TeamsBotApplication` type) so the middleware can resolve it.
 4. **Installs the routing middleware.** It registers `TeamsSdkMiddleware` as an Agents SDK `IMiddleware` and the `IMiddleware[]` the `CloudAdapter` consumes — so you don't wire the pipeline by hand.
+5. **Optionally lets you veto Teams routing per activity.** `AddTeamsSdk<T>(teamsRouteSelector: ...)` can apply extra checks for Teams-channel activities before a matching Teams route is allowed to run. The current sample uses that hook to keep `signin/*` invokes on the Agents SDK side.
 
 Everything else — your `AgentApplicationOptions`, `CloudAdapter`, storage, error handlers, message handlers, auth handlers, ASP.NET host — stays exactly as it is. The Agents SDK is still your hosting layer.
 

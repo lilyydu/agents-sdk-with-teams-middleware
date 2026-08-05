@@ -1,8 +1,10 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+using System;
 using System.Linq;
 using System.Net.Http;
+using Microsoft.Agents.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -30,16 +32,27 @@ public static class TeamsSdkExtensions
     /// requests are authenticated by <see cref="AgentSdkAuthHandler"/> (Agents SDK auth);</item>
     /// <item><see cref="TeamsSdkMiddleware"/> on the <c>CloudAdapter</c> pipeline so Teams turns
     /// are routed to the Teams SDK and everything else falls through to the Agents SDK.</item>
+    /// <item>an optional selector that can apply additional per-activity checks before a
+    /// Teams activity is allowed to route into the Teams SDK.</item>
     /// </list>
     /// This is the only call needed — see <c>Program.cs</c>.
     /// </summary>
     /// <typeparam name="T">A <see cref="TeamsBotApplication"/> subclass.</typeparam>
-    public static IServiceCollection AddTeamsSdk<T>(this IServiceCollection services)
+    /// <param name="teamsRouteSelector">
+    /// Optional extra predicate evaluated only for Teams-channel activities. Return
+    /// <see langword="false"/> to force the turn to
+    /// fall through to the Agents SDK even when the Teams SDK has a matching route.
+    /// </param>
+    public static IServiceCollection AddTeamsSdk<T>(
+        this IServiceCollection services,
+        Func<ITurnContext, bool>? teamsRouteSelector = null)
         where T : TeamsBotApplication
     {
+        // TeamsBotApplication depends on IHttpContextAccessor for its own request-scoped behavior.
         services.AddHttpContextAccessor();
 
-        // DelegatingHandler that acquires Bearer tokens via Agent SDK's IConnections.
+        // DelegatingHandler that acquires outbound Bot Framework tokens via the
+        // Agent SDK connection manager and the ambient Agents SDK turn context.
         services.AddTransient<AgentSdkAuthHandler>();
 
         // Named HttpClient with the auth handler in its pipeline.
@@ -83,7 +96,11 @@ public static class TeamsSdkExtensions
         // resolve array types). The array factory resolves lazily, so it still
         // includes any other IMiddleware the app registers. Fully qualified because
         // Microsoft.AspNetCore.Http also defines an IMiddleware.
-        services.AddSingleton<Microsoft.Agents.Builder.IMiddleware, TeamsSdkMiddleware>();
+        services.AddSingleton<Microsoft.Agents.Builder.IMiddleware>(sp =>
+            new TeamsSdkMiddleware(
+                sp.GetRequiredService<TeamsBotApplication>(),
+                sp.GetRequiredService<ILogger<TeamsSdkMiddleware>>(),
+                teamsRouteSelector));
         services.AddSingleton<Microsoft.Agents.Builder.IMiddleware[]>(
             sp => sp.GetServices<Microsoft.Agents.Builder.IMiddleware>().ToArray());
 
