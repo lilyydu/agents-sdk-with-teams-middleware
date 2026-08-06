@@ -85,8 +85,9 @@ CloudAdapter ── IMiddleware[] includes TeamsSdkMiddleware
                 ├─ serialize Agents SDK IActivity → JSON → Teams SDK CoreActivity (same BF wire schema)
                 ├─ stash ITurnContext in AsyncLocal (CurrentTurnContext)
                 ├─ _teamsBot.HasMatchingRoute(activity)?
-                │     ├─ yes →  invoke  → ProcessInvokeAsync → bridge InvokeResponse to Agents SDK send pipeline
-                │     │         other  → _teamsBot.OnActivity(activity)
+                │     ├─ yes →  build synthetic HttpContext from the current turn
+                │     │         → _teamsBot.ProcessAsync(syntheticContext)
+                │     │         → invoke: mirror captured response back into Agent SDK invoke pipeline
                 │     │         finally restore AsyncLocal → return  (short-circuit; do NOT call next())
                 │     └─ no  →  await next()  → AgentApplication handlers run as usual
 ```
@@ -94,8 +95,8 @@ CloudAdapter ── IMiddleware[] includes TeamsSdkMiddleware
 Three points worth noting:
 
 1. **The middleware never double-dispatches.** If a Teams SDK route matches (`HasMatchingRoute`), the `AgentApplication`'s own handlers do not also fire for that activity — the middleware `return`s without calling `next()`. If no route matches, the activity flows to `AgentApplication` exactly as if the bridge weren't installed.
-2. **The route-match check uses a throwaway copy of the activity.** `HasMatchingRoute` calls `TeamsActivity.FromActivity`, which *mutates* the `CoreActivity` (its `Extract` calls remove entries from `Properties`). So the middleware deserializes a separate `CoreActivity` for the match check and a fresh one for the handler — see `TeamsSdkMiddleware.cs`. You don't have to think about this, but it's why the activity is deserialized twice.
-3. **Invoke responses are propagated through the Agents SDK send pipeline.** Teams SDK invoke handlers return a typed `InvokeResponse`; the middleware wraps it via `Activity.CreateInvokeResponseActivity(...)` and sends it through `turnContext.SendActivityAsync` so the Agents SDK HTTP layer writes the synchronous body. Using `ProcessInvokeAsync` (rather than the non-invoke `OnActivity` path) avoids a double-write to `HttpContext.Response`.
+2. **The route-match check uses a throwaway copy of the activity.** `HasMatchingRoute` calls `TeamsActivity.FromActivity`, which *mutates* the `CoreActivity` (its `Extract` calls remove entries from `Properties`). So the middleware deserializes a separate `CoreActivity` for the match check and then replays the original activity JSON through a synthetic `HttpContext` for the actual Teams SDK processing.
+3. **Invoke responses are still propagated through the Agents SDK send pipeline.** `TeamsBotApplication.ProcessAsync(...)` writes invoke responses to `IHttpContextAccessor.HttpContext.Response`, so the middleware gives it a synthetic response stream, captures the status/body, then mirrors that payload back via `Activity.CreateInvokeResponseActivity(...)` and `turnContext.SendActivityAsync(...)`. That keeps the CloudAdapter's invoke response path satisfied without relying on a live ASP.NET request.
 
 ### The Teams SDK and how it differs
 
@@ -414,13 +415,14 @@ inbound activity (ChannelId == Channels.Msteams)
         ▼
 TeamsSdkMiddleware.OnTurnAsync
         │
-        ├─ serialize IActivity → CoreActivity
+        ├─ serialize IActivity → JSON
         ├─ stash ITurnContext in AsyncLocal (CurrentTurnContext)
         ├─ _teamsBot.HasMatchingRoute(activity)?
         │     │
         │     ├─ matched → process via Teams SDK
-        │     │              ├─ invoke → ProcessInvokeAsync → bridge InvokeResponse to send pipeline
-        │     │              └─ other  → _teamsBot.OnActivity(activity) (uses ConversationClient)
+        │     │              ├─ build synthetic HttpContext from JSON + claims
+        │     │              ├─ _teamsBot.ProcessAsync(syntheticContext)
+        │     │              └─ invoke → mirror captured response to send pipeline
         │     │              return (short-circuit)
         │     │
         │     └─ unmatched → await next()

@@ -32,8 +32,8 @@ public static class TeamsSdkExtensions
     /// requests are authenticated by <see cref="AgentSdkAuthHandler"/> (Agents SDK auth);</item>
     /// <item><see cref="TeamsSdkMiddleware"/> on the <c>CloudAdapter</c> pipeline so Teams turns
     /// are routed to the Teams SDK and everything else falls through to the Agents SDK.</item>
-    /// <item>an optional selector that can apply additional per-activity checks before a
-    /// Teams activity is allowed to route into the Teams SDK.</item>
+    /// <item>an optional bypass that can force specific Teams activities to fall through
+    /// to the Agents SDK instead of routing into the Teams SDK.</item>
     /// </list>
     /// This is the only call needed — see <c>Program.cs</c>.
     /// </summary>
@@ -100,6 +100,8 @@ public static class TeamsSdkExtensions
             new TeamsSdkMiddleware(
                 sp.GetRequiredService<TeamsBotApplication>(),
                 sp.GetRequiredService<ILogger<TeamsSdkMiddleware>>(),
+                sp.GetRequiredService<IHttpContextAccessor>(),
+                sp,
                 shouldBypassTeams));
         services.AddSingleton<Microsoft.Agents.Builder.IMiddleware[]>(
             sp => sp.GetServices<Microsoft.Agents.Builder.IMiddleware>().ToArray());

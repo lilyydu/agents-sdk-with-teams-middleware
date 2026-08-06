@@ -21,7 +21,10 @@ builder.Services.AddTeamsSdk<MyTeamsBot>(shouldBypassTeams: turnContext =>
 `AddTeamsSdk<MyTeamsBot>()` is the only integration call. It registers the Teams SDK bot,
 bridges outbound auth through the Agents SDK connection manager plus the ambient Agents SDK
 turn context, and installs the middleware that decides whether a turn stays in the Agents SDK
-or is handed to the Teams SDK.
+or is handed to the Teams SDK. Matched Teams turns are replayed through
+`TeamsBotApplication.ProcessAsync(...)` on a synthetic `HttpContext` built from the current
+Agent turn, so Teams message turns still work when the CloudAdapter processes them on a
+background thread.
 
 The optional bypass runs only for Teams-channel activities and can force a fallthrough to
 the Agents SDK even when the Teams SDK has a matching route. This sample uses it to keep

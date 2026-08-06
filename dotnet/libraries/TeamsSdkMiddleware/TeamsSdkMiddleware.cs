@@ -4,15 +4,19 @@
 using Microsoft.Agents.Builder;
 using Microsoft.Agents.Core.Models;
 using Microsoft.Agents.Core.Serialization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Teams.Apps;
 using Microsoft.Teams.Apps.Schema;
 using Microsoft.Teams.Core.Schema;
 using System;
+using System.IO;
+using System.Security.Claims;
+using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using IMiddleware = Microsoft.Agents.Builder.IMiddleware;
-using TeamsInvokeResponse = Microsoft.Teams.Apps.Handlers.InvokeResponse;
 
 namespace TeamsSdk;
 
@@ -84,15 +88,21 @@ public class TeamsSdkMiddleware : IMiddleware
 
     private readonly TeamsBotApplication _teamsBot;
     private readonly ILogger<TeamsSdkMiddleware> _logger;
+    private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly IServiceProvider _serviceProvider;
     private readonly Func<ITurnContext, bool>? _shouldBypassTeams;
 
     public TeamsSdkMiddleware(
         TeamsBotApplication teamsBot,
         ILogger<TeamsSdkMiddleware> logger,
+        IHttpContextAccessor httpContextAccessor,
+        IServiceProvider serviceProvider,
         Func<ITurnContext, bool>? shouldBypassTeams = null)
     {
         _teamsBot = teamsBot ?? throw new ArgumentNullException(nameof(teamsBot));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _httpContextAccessor = httpContextAccessor ?? throw new ArgumentNullException(nameof(httpContextAccessor));
+        _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
         _shouldBypassTeams = shouldBypassTeams;
     }
 
@@ -125,49 +135,33 @@ public class TeamsSdkMiddleware : IMiddleware
             {
                 _logger.LogDebug("TeamsSdkMiddleware: routing msteams activity {ActivityId} to Teams SDK", turnContext.Activity.Id);
 
-                // Deserialize a fresh CoreActivity for the handler (the routeCheckActivity
-                // was mutated by HasMatchingRoute's Extract calls).
-                CoreActivity coreActivity = CoreActivity.FromJsonString(activityJson);
-
                 // Make the Agent SDK turn context available to Teams SDK handlers.
                 // Non-invoke activities are processed on a background thread where
-                // HttpContext is unavailable, so we use an AsyncLocal that flows
-                // within the same async context regardless of thread.  Handlers
-                // access it via TeamsSdkMiddleware.CurrentTurnContext.
+                // the original ASP.NET HttpContext is unavailable, so we synthesize
+                // a minimal HttpContext from the current turn before calling
+                // TeamsBotApplication.ProcessAsync.
                 ITurnContext? previousTurnContext = _currentTurnContext.Value;
+                HttpContext? previousHttpContext = _httpContextAccessor.HttpContext;
                 _currentTurnContext.Value = turnContext;
+                DefaultHttpContext syntheticContext = CreateSyntheticHttpContext(turnContext, activityJson, previousHttpContext);
+                _httpContextAccessor.HttpContext = syntheticContext;
 
-                TeamsInvokeResponse? invokeResponse = null;
                 try
                 {
+                    await _teamsBot.ProcessAsync(syntheticContext, cancellationToken);
+
                     if (turnContext.Activity.Type == ActivityTypes.Invoke)
                     {
-                        // Invoke activities require special handling: Teams SDK returns an
-                        // InvokeResponse that must be bridged into Agent SDK's StackState
-                        // so that ProcessTurnResults can write the correct HTTP response.
-                        // Using ProcessInvokeAsync avoids the double-write conflict that
-                        // occurs when OnActivity writes directly to HttpContext.Response.
-                        invokeResponse = await _teamsBot.ProcessInvokeAsync(coreActivity, cancellationToken);
-                    }
-                    else
-                    {
-                        // Non-invoke activities: use the standard OnActivity delegate which
-                        // sends responses via ConversationClient.
-                        if (_teamsBot.OnActivity != null)
-                        {
-                            await _teamsBot.OnActivity(coreActivity, cancellationToken);
-                        }
+                        Activity invokeResponseActivity = await CreateInvokeResponseActivityAsync(syntheticContext.Response, cancellationToken);
+                        await turnContext.SendActivityAsync(invokeResponseActivity, cancellationToken);
                     }
                 }
                 finally
                 {
+                    _httpContextAccessor.HttpContext = previousHttpContext;
                     _currentTurnContext.Value = previousTurnContext;
-                }
-
-                if (invokeResponse is not null)
-                {
-                    var responseActivity = Activity.CreateInvokeResponseActivity(invokeResponse.Body, invokeResponse.Status);
-                    await turnContext.SendActivityAsync((Activity)responseActivity, cancellationToken);
+                    await syntheticContext.Request.Body.DisposeAsync();
+                    await syntheticContext.Response.Body.DisposeAsync();
                 }
 
                 // Short-circuit: do NOT call next() — Teams SDK handled this activity.
@@ -179,5 +173,60 @@ public class TeamsSdkMiddleware : IMiddleware
 
         // Non-Teams channels (or unmatched Teams activities) continue to the Agent SDK pipeline.
         await next(cancellationToken);
+    }
+
+    private DefaultHttpContext CreateSyntheticHttpContext(ITurnContext turnContext, string activityJson, HttpContext? previousHttpContext)
+    {
+        byte[] requestBody = Encoding.UTF8.GetBytes(activityJson);
+        var syntheticContext = new DefaultHttpContext
+        {
+            RequestServices = previousHttpContext?.RequestServices ?? _serviceProvider,
+            TraceIdentifier = previousHttpContext?.TraceIdentifier ?? turnContext.Activity.RequestId ?? Guid.NewGuid().ToString(),
+            User = turnContext.Identity is ClaimsIdentity identity
+                ? new ClaimsPrincipal(identity)
+                : previousHttpContext?.User
+                    ?? new ClaimsPrincipal(new ClaimsIdentity())
+        };
+
+        syntheticContext.Request.Method = HttpMethods.Post;
+        syntheticContext.Request.ContentType = "application/json";
+        syntheticContext.Request.ContentLength = requestBody.Length;
+        syntheticContext.Request.Body = new MemoryStream(requestBody);
+        syntheticContext.Response.Body = new MemoryStream();
+
+        if (previousHttpContext is not null)
+        {
+            syntheticContext.Request.Scheme = previousHttpContext.Request.Scheme;
+            syntheticContext.Request.Host = previousHttpContext.Request.Host;
+            syntheticContext.Request.PathBase = previousHttpContext.Request.PathBase;
+            syntheticContext.Request.Path = previousHttpContext.Request.Path;
+            syntheticContext.Request.QueryString = previousHttpContext.Request.QueryString;
+            syntheticContext.Request.Protocol = previousHttpContext.Request.Protocol;
+
+            if (previousHttpContext.Request.Headers.TryGetValue("MS-CV", out var correlationVector))
+            {
+                syntheticContext.Request.Headers["MS-CV"] = correlationVector.ToString();
+            }
+        }
+
+        return syntheticContext;
+    }
+
+    private static async Task<Activity> CreateInvokeResponseActivityAsync(HttpResponse response, CancellationToken cancellationToken)
+    {
+        object? body = null;
+
+        if (response.Body.CanSeek)
+        {
+            response.Body.Position = 0;
+        }
+
+        if (response.Body is not null && response.Body.Length > 0)
+        {
+            using JsonDocument responseJson = await JsonDocument.ParseAsync(response.Body, cancellationToken: cancellationToken);
+            body = responseJson.RootElement.Clone();
+        }
+
+        return (Activity)Activity.CreateInvokeResponseActivity(body, response.StatusCode);
     }
 }
