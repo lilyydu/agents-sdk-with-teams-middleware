@@ -1,0 +1,19 @@
+{
+  "name": "teams-sdk-vanilla",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Vanilla teams.ts sample — no Agents SDK, no TeamsSdkMiddleware.",
+  "type": "commonjs",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node --env-file=.env dist/index.js",
+    "dev": "tsc -p tsconfig.json && node --env-file=.env dist/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@microsoft/teams.api": "^2.0.0",
+    "@microsoft/teams.apps": "^2.0.0"
+  }
+}

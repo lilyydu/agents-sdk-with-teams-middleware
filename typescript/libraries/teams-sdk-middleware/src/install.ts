@@ -26,7 +26,7 @@ import type {
 import { App, type AppOptions, type IPlugin } from '@microsoft/teams.apps';
 
 import { createAgentSdkTokenProvider } from './credentials';
-import { TeamsSdkMiddleware } from './middleware';
+import { TeamsSdkMiddleware, type ShouldBypassTeams } from './middleware';
 
 const RESERVED_KEYS = ['clientId', 'tenantId', 'token'] as const;
 
@@ -68,11 +68,15 @@ export type UseTeamsSdkOptions<TPlugin extends IPlugin = IPlugin> = Omit<
  *   constructor. Use this for `logger`, `plugins`, or any other AppOptions
  *   field. `clientId`, `tenantId`, and `token` are reserved and will throw
  *   if passed here.
+ * @param shouldBypassTeams Optional predicate evaluated only for Teams-channel
+ *   turns. Return `true` to bypass teams.ts routing and force the turn to fall
+ *   through to the Agents SDK even when teams.ts has a matching route.
  *
  * @returns The configured teams.ts App. Register handlers on the returned
  *   object (`teamsApp.on('message', ...)`, etc.).
  *
  * After this call:
+ *   - Teams turns claimed by `shouldBypassTeams` → fall through to `app`.
  *   - Teams turns with a matching teams.ts handler → handled by the App.
  *   - Teams turns with no match → fall through to `app`'s handlers.
  *   - Any other channel → handled by `app` unchanged.
@@ -80,7 +84,8 @@ export type UseTeamsSdkOptions<TPlugin extends IPlugin = IPlugin> = Omit<
 export function useTeamsSdk<TState extends TurnState, TPlugin extends IPlugin = IPlugin>(
   app: AgentApplication<TState>,
   connectionManager: AgentSdkConnections,
-  teamsAppOptions: UseTeamsSdkOptions<TPlugin> = {}
+  teamsAppOptions: UseTeamsSdkOptions<TPlugin> = {},
+  shouldBypassTeams?: ShouldBypassTeams
 ): App<TPlugin> {
   const reserved = RESERVED_KEYS.filter(k => k in teamsAppOptions);
   if (reserved.length > 0) {
@@ -97,6 +102,6 @@ export function useTeamsSdk<TState extends TurnState, TPlugin extends IPlugin = 
     token: createAgentSdkTokenProvider(connectionManager),
   });
 
-  app.adapter.use(new TeamsSdkMiddleware(teamsApp));
+  app.adapter.use(new TeamsSdkMiddleware(teamsApp, shouldBypassTeams));
   return teamsApp;
 }

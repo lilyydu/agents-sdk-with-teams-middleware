@@ -4,8 +4,10 @@ Middleware that matches Teams turns to a teams.py App.
 Lifecycle of a turn:
 
     1. Non-Teams channel → pass through to AgentApplication.
-    2. Teams turn with no matching teams.py route → pass through too.
-    3. Teams turn with a match → ensure teams.py is initialized, expose the
+    2. Teams turn the caller's ``should_bypass_teams`` predicate claims → pass
+       through too, even when teams.py has a matching route.
+    3. Teams turn with no matching teams.py route → pass through too.
+    4. Teams turn with a match → ensure teams.py is initialized, expose the
        Agents SDK TurnContext via a ContextVar, hand the activity to
        teams.py's activity_processor, then propagate any InvokeResponse
        back through the Agents SDK send pipeline so the HTTP layer can
@@ -18,7 +20,7 @@ same activity and, for invokes, would emit a duplicate response.
 
 from __future__ import annotations
 
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Optional
 
 from microsoft_agents.activity import Activity, ActivityTypes, InvokeResponse
 from microsoft_agents.hosting.core.middleware_set import Middleware
@@ -34,21 +36,44 @@ from ._token import _TeamsSDKToken
 TEAMS_CHANNEL_ID = "msteams"
 
 
+def is_teams_channel(activity) -> bool:
+    """True for Teams turns, including sub-channels like ``msteams:COPILOT``."""
+    channel_id = activity.channel_id
+    if not channel_id:
+        return False
+
+    channel = getattr(channel_id, "channel", None)
+    if channel is None:
+        channel = str(channel_id).split(":", 1)[0]
+    return channel == TEAMS_CHANNEL_ID
+
+
 class TeamsSDKMiddleware(Middleware):
 
-    def __init__(self, teams_app: App) -> None:
+    def __init__(
+        self,
+        teams_app: App,
+        should_bypass_teams: Optional[Callable[[TurnContext], bool]] = None,
+    ) -> None:
+        """
+        Args:
+            teams_app: The teams.py ``App`` that owns matching Teams turns.
+            should_bypass_teams: Optional predicate evaluated only for
+                Teams-channel turns. Return ``True`` to force the turn to fall
+                through to ``AgentApplication`` even when teams.py has a
+                matching route.
+        """
         self._teams_app = teams_app
+        self._should_bypass_teams = should_bypass_teams
 
     async def on_turn(
         self,
         context: TurnContext,
-        logic: Callable[[], Awaitable],
+        logic: Callable[[TurnContext], Awaitable],
     ) -> None:
-        if context.activity.channel_id != TEAMS_CHANNEL_ID:
-            await logic()
+        if not is_teams_channel(context.activity):
+            await logic(context)
             return
-
-        core_activity = self._translate_inbound(context.activity)
 
         # Idempotent — App tracks _initialized internally. Run on every Teams
         # turn so AgentApplication handlers can safely call into TEAMS_APP
@@ -56,9 +81,15 @@ class TeamsSDKMiddleware(Middleware):
         # route matched this turn.
         await self._teams_app.initialize()
 
+        if self._should_bypass_teams is not None and self._should_bypass_teams(context):
+            await logic(context)
+            return
+
+        core_activity = self._translate_inbound(context.activity)
+
         if not self._teams_app.router.select_handlers(core_activity):
             # No teams.py route matches; let AgentApplication try its handlers.
-            await logic()
+            await logic(context)
             return
 
         event = ActivityEvent(

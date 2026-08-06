@@ -14,15 +14,19 @@ design. When changing one, mirror the change in the other two unless there's a
 language-specific reason not to.
 
 All three now follow the same `libraries/` (the reusable extension) + `test_samples/`
-(a runnable sample that references it) split:
+(runnable samples that reference it) split:
 
 ```
 ```
-python/      libraries/teams_sdk                       +  test_samples/teams_sdk_sample
-typescript/  libraries/teams-sdk-middleware            +  test_samples/teams-sdk-sample   (npm workspaces)
+python/      libraries/teams_sdk                       +  test_samples/teams_sdk_sample   +  test_samples/teams_sdk_vanilla
+typescript/  libraries/teams-sdk-middleware            +  test_samples/teams-sdk-sample   +  test_samples/teams-sdk-vanilla   (npm workspaces)
 dotnet/      libraries/TeamsSdkMiddleware              +  test_samples/TeamsMiddlewareSample  (TeamsMiddleware.slnx)
 ```
 ```
+
+The `*_vanilla` / `*-vanilla` samples are plain Teams SDK — no Agents SDK, no middleware.
+They exist as a control group: run the same command against a vanilla sample and its
+middleware counterpart to isolate what the bridge actually changes.
 
 ## The core file: the middleware
 
@@ -81,6 +85,7 @@ cd typescript
 npm install
 npm run build            # builds all workspaces (verified clean)
 npm run start --workspace teams-sdk-sample   # needs typescript/test_samples/teams-sdk-sample/.env
+npm run start --workspace teams-sdk-vanilla  # control group; needs .../teams-sdk-vanilla/.env
 ```
 Deps are public npm: `@microsoft/agents-*`, `@microsoft/teams.*`.
 
@@ -94,6 +99,10 @@ py -3.12 -m venv .venv                              # Python 3.10+ required
 ```
 `requirements.txt` editable-installs `../../libraries/teams_sdk` (which has its own
 `pyproject.toml`), so edits to the bridge are picked up without reinstalling.
+
+`test_samples/teams_sdk_vanilla` is the control group and follows the same steps, minus
+the editable bridge install — its `requirements.txt` is just the Teams SDK. Give it its
+own venv and a different `PORT` so it can run alongside the middleware sample.
 The Agents SDK reads nested config from env vars split on `__`. The sample needs a
 `CONNECTIONS.SERVICE_CONNECTION` config — minimal `.env`:
 ```
