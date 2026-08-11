@@ -18,14 +18,10 @@ export function helpCard() {
         type: 'FactSet',
         facts: [
           { title: 'help', value: 'This command list' },
-          { title: 'cards', value: 'Adaptive Card with Action.Execute invoke' },
-          { title: 'citation', value: 'AI labels, citations, sensitivity, feedback' },
-          { title: 'stream', value: 'Streaming response with informative updates' },
           { title: 'react', value: 'Bot adds/removes emoji reactions' },
           { title: 'quote', value: 'Bot quotes its own message' },
-          { title: 'proactive', value: 'Delayed proactive message' },
+          { title: 'targeted', value: 'Ephemeral message visible only to sender' },
           { title: 'task', value: 'Task module fetch/submit flow' },
-          { title: 'turn context', value: 'Use Agent SDK TurnContext from a teams.ts handler' },
         ],
       },
       {
@@ -39,33 +35,9 @@ export function helpCard() {
         facts: [
           { title: 'agents sdk react', value: "Reach teams.ts's API client from an Agents SDK handler" },
           { title: 'agents sdk proactive', value: 'Trigger a proactive send from an Agents SDK handler' },
-          { title: 'agents sdk citation', value: 'Build a Teams citation activity from an Agents SDK handler' },
+          { title: 'channel', value: 'Report the channel this turn arrived on and how it was routed' },
           { title: 'anything else', value: "Echo via Agents SDK '[Agent SDK] You said: ...'" },
         ],
-      },
-    ],
-  } as const;
-}
-
-export function pingCard() {
-  return {
-    type: 'AdaptiveCard',
-    $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
-    version: '1.5',
-    body: [
-      { type: 'TextBlock', text: '🎯 Invoke demo', weight: 'Bolder', size: 'Medium' },
-      {
-        type: 'TextBlock',
-        text: 'Press the button to fire an Action.Execute invoke.',
-        wrap: true,
-      },
-    ],
-    actions: [
-      {
-        type: 'Action.Execute',
-        verb: 'ping',
-        title: 'Ping the bot',
-        data: { action: 'ping', sentAt: 'now' },
       },
     ],
   } as const;

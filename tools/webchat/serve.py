@@ -6,6 +6,15 @@
 Serves ``index.html`` plus a ``/api/token`` endpoint that exchanges the Direct
 Line *secret* for a short-lived *token*, so the secret stays on this process and
 never reaches the browser.
+
+Usage::
+
+    export DIRECTLINE_SECRET=...          # or put it in tools/webchat/.env
+    python tools/webchat/serve.py         # http://localhost:3000
+
+Nothing here is sample-specific: it drives whichever sample is currently bound
+to the bot registration's endpoint, so the same page works against the Python
+and TypeScript samples in turn.
 """
 
 from __future__ import annotations
@@ -35,7 +44,7 @@ def _load_secret() -> str:
             "DIRECTLINE_SECRET is not set. Export it, or write it to "
             f"{env_file} as DIRECTLINE_SECRET=<secret>.\n"
             "Fetch it with:\n"
-            "  az bot directline show --name <botId> --resource-group <rg> "
+            "  az bot directline show --name <botName> --resource-group <rg> "
             "--with-secrets -o json"
         )
     return secret
@@ -52,18 +61,16 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+    def do_GET(self) -> None:  # noqa: N802 — BaseHTTPRequestHandler API
         if self.path.startswith("/api/token"):
             req = urllib.request.Request(
-                TOKEN_URL,
-                method="POST",
-                data=b"",
+                TOKEN_URL, method="POST", data=b"",
                 headers={"Authorization": f"Bearer {SECRET}"},
             )
             try:
                 with urllib.request.urlopen(req, timeout=15) as resp:
                     payload = resp.read()
-            except Exception as exc:
+            except Exception as exc:  # surface the failure in the browser
                 self._send(502, json.dumps({"error": str(exc)}).encode(), "application/json")
                 return
             self._send(200, payload, "application/json")

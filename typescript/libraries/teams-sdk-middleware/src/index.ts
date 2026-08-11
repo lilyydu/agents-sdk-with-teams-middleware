@@ -10,5 +10,5 @@ export {
   type AgentSdkConnections,
   type UseTeamsSdkOptions,
 } from './install';
-export { TeamsSdkMiddleware } from './middleware';
+export { TeamsSdkMiddleware, isTeamsChannel, type ShouldBypassTeams } from './middleware';
 export { TeamsSdkSyntheticToken } from './token';

@@ -16,10 +16,11 @@ registration.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable, Optional
 
 from microsoft_agents.hosting.core.app.agent_application import AgentApplication
 from microsoft_agents.hosting.core.authorization.connections import Connections
+from microsoft_agents.hosting.core.turn_context import TurnContext
 
 from microsoft_teams.apps import App
 
@@ -30,6 +31,7 @@ from .middleware import TeamsSDKMiddleware
 def use_teams_sdk(
     app: AgentApplication,
     connection_manager: Connections,
+    should_bypass_teams: Optional[Callable[[TurnContext], bool]] = None,
     **teams_app_kwargs: Any,
 ) -> App:
     """Wire teams.py into ``app`` and return the configured ``App``.
@@ -41,6 +43,10 @@ def use_teams_sdk(
             connection's ``CLIENT_ID`` and ``TENANT_ID`` are used to
             construct the teams.py ``App``; its token providers are wrapped
             so teams.py's outbound calls use the same credentials.
+        should_bypass_teams: Optional predicate evaluated only for
+            Teams-channel turns. Return ``True`` to bypass teams.py routing and
+            force the turn to fall through to the Agents SDK even when teams.py
+            has a matching route.
         **teams_app_kwargs: Extra keyword arguments forwarded to
             ``microsoft_teams.apps.App``. Use this for ``logger``, ``plugins``,
             or any other ``App`` constructor option. ``client_id``,
@@ -52,6 +58,7 @@ def use_teams_sdk(
         object (``@teams_app.on_message_pattern(...)``, etc.).
 
     After this call:
+        * Teams turns claimed by ``should_bypass_teams`` → fall through to ``app``.
         * Teams turns with a matching teams.py handler → handled by the App.
         * Teams turns with no match → fall through to ``app``'s handlers.
         * Any other channel → handled by ``app`` unchanged.
@@ -70,5 +77,5 @@ def use_teams_sdk(
         **teams_app_kwargs,
     )
 
-    app.adapter.use(TeamsSDKMiddleware(teams_app))
+    app.adapter.use(TeamsSDKMiddleware(teams_app, should_bypass_teams))
     return teams_app

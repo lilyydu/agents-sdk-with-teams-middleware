@@ -5,7 +5,7 @@
 
 Usage::
 
-    py tools/webchat/dl_test.py help channel "agents sdk react"
+    python tools/webchat/dl_test.py help channel "agents sdk react"
 
 Reads DIRECTLINE_SECRET from the environment or tools/webchat/.env.
 """
@@ -59,10 +59,10 @@ def describe(activity: dict) -> list[str]:
         texts = []
         if isinstance(content, dict) and isinstance(content.get("body"), list):
             texts = [
-                block["text"] for block in content["body"]
-                if isinstance(block, dict) and block.get("text")
+                b["text"] for b in content["body"]
+                if isinstance(b, dict) and b.get("text")
             ]
-        summary = " | ".join(text[:60] for text in texts[:4])
+        summary = " | ".join(t[:60] for t in texts[:4])
         lines.append(f"[attachment] {att.get('contentType', '?')} {summary}".rstrip())
     if not lines:
         lines.append(f"(empty activity type={activity.get('type')})")
@@ -72,30 +72,30 @@ def describe(activity: dict) -> list[str]:
 def main(messages: list[str]) -> None:
     secret = _load_secret()
     conv = call("POST", f"{BASE}/conversations", secret)
-    conversation_id, token = conv["conversationId"], conv["token"]
-    print(f"conversation {conversation_id[:20]}...\n")
+    cid, token = conv["conversationId"], conv["token"]
+    print(f"conversation {cid[:20]}…\n")
 
     watermark = None
-    for message in messages:
+    for msg in messages:
         call(
             "POST",
-            f"{BASE}/conversations/{conversation_id}/activities",
+            f"{BASE}/conversations/{cid}/activities",
             token,
-            {"type": "message", "from": {"id": "webchat-tester"}, "text": message},
+            {"type": "message", "from": {"id": "webchat-tester"}, "text": msg},
         )
         time.sleep(3.5)
-        url = f"{BASE}/conversations/{conversation_id}/activities"
+        url = f"{BASE}/conversations/{cid}/activities"
         if watermark:
             url += f"?watermark={watermark}"
         res = call("GET", url, token)
         watermark = res.get("watermark")
 
-        print(f"-> {message!r}")
+        print(f"→ {msg!r}")
         for activity in res["activities"]:
             if activity["from"]["id"] == "webchat-tester":
                 continue
             for line in describe(activity):
-                print(f"   <- {line}")
+                print(f"   ← {line}")
         print()
 
 

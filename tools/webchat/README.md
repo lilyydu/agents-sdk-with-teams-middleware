@@ -1,40 +1,41 @@
 # Web Chat / Direct Line harness
 
 A tiny Direct Line client for exercising the samples on a **non-Teams** channel, so you can
-see the half of the middleware contract that Teams cannot show: activities that pass straight
+see the half of the middleware contract that Teams can't show: activities that pass straight
 through to the Agents SDK app.
 
-Nothing here is sample-specific; it drives whichever sample is currently bound to the bot
+Nothing here is sample-specific — it drives whichever sample is currently bound to the bot
 registration's endpoint.
 
 ## Setup
 
-Fetch the Direct Line secret for the Azure bot:
+Direct Line is already enabled on the Azure Bot registration. Fetch the secret:
 
-```powershell
-az bot directline show --name <botId> --resource-group <rg> --with-secrets -o json
+```bash
+az bot directline show --name <botName> --resource-group <rg> --with-secrets -o json
 ```
 
-Then either export it or drop it in `.env` next to these files:
+Then either export it or drop it in `.env` next to these files (gitignored):
 
-```text
+```
 DIRECTLINE_SECRET=<secret>
 ```
 
 ## Browser UI
 
-```powershell
-py tools\webchat\serve.py
+```bash
+python tools/webchat/serve.py        # http://localhost:3000
 ```
 
-This serves `index.html` plus a `/api/token` endpoint that exchanges the Direct Line *secret*
-for a short-lived *token*, so the secret stays on the local process and never reaches the
-browser.
+Serves `index.html` plus a `/api/token` endpoint that exchanges the Direct Line *secret* for
+a short-lived *token*, so the secret stays in this process and never reaches the browser.
+Use this when you want to see Adaptive Cards render.
 
 ## Scripted
 
-```powershell
-py tools\webchat\dl_test.py help channel "agents sdk react"
+```bash
+python tools/webchat/dl_test.py help channel "agents sdk react"
 ```
 
-This sends each argument as a message and prints the replies, including Adaptive Card contents.
+Sends each argument as a message and prints the replies, including Adaptive Card contents —
+card-only replies are otherwise invisible when you filter on `activity.text`.

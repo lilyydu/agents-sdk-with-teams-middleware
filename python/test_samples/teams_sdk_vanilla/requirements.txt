@@ -1,0 +1,4 @@
+# Vanilla Teams SDK sample — no Agents SDK, no middleware.
+python-dotenv
+microsoft-teams-api
+microsoft-teams-apps

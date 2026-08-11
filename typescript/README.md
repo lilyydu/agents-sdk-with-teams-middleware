@@ -13,7 +13,9 @@ libraries/
   teams-sdk-middleware/   # the bridge — what users import
 test_samples/
   teams-sdk-sample/       # live sample wiring it up
+    README.md             # commands, auth, multichannel notes
     MIGRATION.md          # migration guide from TeamsActivityHandler
+  teams-sdk-vanilla/      # baseline: plain teams.ts, no Agents SDK
 ```
 
 ## Quick start
@@ -34,7 +36,7 @@ npm run start --workspace teams-sdk-sample
 
 ```ts
 import { AgentApplication, MsalConnectionManager } from '@microsoft/agents-hosting';
-import { useTeamsSdk, agentSdkTurnContext } from 'teams-sdk-middleware';
+import { useTeamsSdk } from 'teams-sdk-middleware';
 
 const AGENT_SDK_APP = new AgentApplication({ storage: /* ... */ });
 const TEAMS_APP = useTeamsSdk(AGENT_SDK_APP, new MsalConnectionManager());
@@ -50,5 +52,15 @@ AGENT_SDK_APP.onActivity('message', async (context) => {
 });
 ```
 
-See [`test_samples/teams-sdk-sample/MIGRATION.md`](./test_samples/teams-sdk-sample/MIGRATION.md)
+The sample's Teams SDK routes are `help`, `react`, `quote`, `targeted`, and
+`task`. The Agents SDK handles `channel`, `whoami`, `mail`, `signout`,
+`agents sdk react`, `agents sdk proactive`, and the default echo fallback.
+
+See [`test_samples/teams-sdk-sample/README.md`](./test_samples/teams-sdk-sample/README.md)
+for the sign-in demo (two Graph connections) and the Teams / Web Chat / Email
+channel matrix, and
+[`test_samples/teams-sdk-sample/MIGRATION.md`](./test_samples/teams-sdk-sample/MIGRATION.md)
 for the full migration guide from `TeamsActivityHandler` to this bridge.
+
+[`test_samples/teams-sdk-vanilla`](./test_samples/teams-sdk-vanilla) is the
+no-middleware baseline: plain teams.ts, raw JSON activities, no Agents SDK.
