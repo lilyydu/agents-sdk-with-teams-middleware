@@ -9,9 +9,10 @@
 	</PropertyGroup>
 
 	<!--
-		The bridge uses ASP.NET Core abstractions (IHttpContextAccessor,
-		IServiceCollection, AddHttpClient), so it needs the shared framework
-		reference even though it is a class library, not a web app.
+		The bridge uses ASP.NET Core abstractions (IServiceCollection,
+		AddHttpClient, IHttpContextAccessor for TeamsBotApplication itself), so
+		it needs the shared framework reference even though it is a class
+		library, not a web app.
 	-->
 	<ItemGroup>
 		<FrameworkReference Include="Microsoft.AspNetCore.App" />

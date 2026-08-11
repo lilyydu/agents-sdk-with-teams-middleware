@@ -85,17 +85,18 @@ CloudAdapter ── IMiddleware[] includes TeamsSdkMiddleware
                 ├─ serialize Agents SDK IActivity → JSON → Teams SDK CoreActivity (same BF wire schema)
                 ├─ stash ITurnContext in AsyncLocal (CurrentTurnContext)
                 ├─ _teamsBot.HasMatchingRoute(activity)?
-                │     ├─ yes →  invoke  → ProcessInvokeAsync → bridge InvokeResponse to Agents SDK send pipeline
-                │     │         other  → _teamsBot.OnActivity(activity)
-                │     │         then  return  (short-circuit; do NOT call next())
+                │     ├─ yes →  build synthetic HttpContext from the current turn
+                │     │         → _teamsBot.ProcessAsync(syntheticContext)
+                │     │         → invoke: mirror captured response back into Agent SDK invoke pipeline
+                │     │         finally restore AsyncLocal → return  (short-circuit; do NOT call next())
                 │     └─ no  →  await next()  → AgentApplication handlers run as usual
 ```
 
 Three points worth noting:
 
 1. **The middleware never double-dispatches.** If a Teams SDK route matches (`HasMatchingRoute`), the `AgentApplication`'s own handlers do not also fire for that activity — the middleware `return`s without calling `next()`. If no route matches, the activity flows to `AgentApplication` exactly as if the bridge weren't installed.
-2. **The route-match check uses a throwaway copy of the activity.** `HasMatchingRoute` calls `TeamsActivity.FromActivity`, which *mutates* the `CoreActivity` (its `Extract` calls remove entries from `Properties`). So the middleware deserializes a separate `CoreActivity` for the match check and a fresh one for the handler — see `TeamsSdkMiddleware.cs`. You don't have to think about this, but it's why the activity is deserialized twice.
-3. **Invoke responses are propagated through the Agents SDK send pipeline.** Teams SDK invoke handlers return a typed `InvokeResponse`; the middleware wraps it via `Activity.CreateInvokeResponseActivity(...)` and sends it through `turnContext.SendActivityAsync` so the Agents SDK HTTP layer writes the synchronous body. Using `ProcessInvokeAsync` (rather than the non-invoke `OnActivity` path) avoids a double-write to `HttpContext.Response`.
+2. **The route-match check uses a throwaway copy of the activity.** `HasMatchingRoute` calls `TeamsActivity.FromActivity`, which *mutates* the `CoreActivity` (its `Extract` calls remove entries from `Properties`). So the middleware deserializes a separate `CoreActivity` for the match check and then replays the original activity JSON through a synthetic `HttpContext` for the actual Teams SDK processing.
+3. **Invoke responses are still propagated through the Agents SDK send pipeline.** `TeamsBotApplication.ProcessAsync(...)` writes invoke responses to `IHttpContextAccessor.HttpContext.Response`, so the middleware gives it a synthetic response stream, captures the status/body, then mirrors that payload back via `Activity.CreateInvokeResponseActivity(...)` and `turnContext.SendActivityAsync(...)`. That keeps the CloudAdapter's invoke response path satisfied without relying on a live ASP.NET request.
 
 ### The Teams SDK and how it differs
 
@@ -216,9 +217,11 @@ public class MyTeamsBot : TeamsBotApplication
 `AddTeamsSdk<T>()` (in `TeamsSdkExtensions.cs`) does the wiring:
 
 1. **Reuses Agent SDK auth.** It registers an `AgentSdkAuthHandler` (a `DelegatingHandler`) on a named `HttpClient`, so outbound Teams SDK calls acquire Bearer tokens via the Agent SDK's `IConnections` / `IAccessTokenProvider` — the same `clientId` / `tenantId` your Agents SDK app is already configured with. No separate `AzureAd` config section.
+   The current bridge selects the per-turn provider from `TeamsSdkMiddleware.CurrentTurnContext?.Identity` and falls back to the default connection outside a turn; it does not depend on `IHttpContextAccessor` for outbound auth.
 2. **Builds the Teams SDK clients** (`ConversationClient`, `UserTokenClient`, `ApiClient`) on top of that authenticated `HttpClient`.
 3. **Registers your `TeamsBotApplication` subclass** as a singleton (and under the base `TeamsBotApplication` type) so the middleware can resolve it.
 4. **Installs the routing middleware.** It registers `TeamsSdkMiddleware` as an Agents SDK `IMiddleware` and the `IMiddleware[]` the `CloudAdapter` consumes — so you don't wire the pipeline by hand.
+5. **Optionally lets you bypass Teams routing per activity.** `AddTeamsSdk<T>(shouldBypassTeams: ...)` can force a Teams-channel activity to fall through to the Agents SDK before a matching Teams route is allowed to run. The current sample uses that hook to keep `signin/*` invokes on the Agents SDK side.
 
 Everything else — your `AgentApplicationOptions`, `CloudAdapter`, storage, error handlers, message handlers, auth handlers, ASP.NET host — stays exactly as it is. The Agents SDK is still your hosting layer.
 
@@ -412,13 +415,14 @@ inbound activity (ChannelId == Channels.Msteams)
         ▼
 TeamsSdkMiddleware.OnTurnAsync
         │
-        ├─ serialize IActivity → CoreActivity
+        ├─ serialize IActivity → JSON
         ├─ stash ITurnContext in AsyncLocal (CurrentTurnContext)
         ├─ _teamsBot.HasMatchingRoute(activity)?
         │     │
         │     ├─ matched → process via Teams SDK
-        │     │              ├─ invoke → ProcessInvokeAsync → bridge InvokeResponse to send pipeline
-        │     │              └─ other  → _teamsBot.OnActivity(activity) (uses ConversationClient)
+        │     │              ├─ build synthetic HttpContext from JSON + claims
+        │     │              ├─ _teamsBot.ProcessAsync(syntheticContext)
+        │     │              └─ invoke → mirror captured response to send pipeline
         │     │              return (short-circuit)
         │     │
         │     └─ unmatched → await next()

@@ -1,111 +1,178 @@
-# Teams SDK + Agents SDK Sample (.NET)
+# Teams SDK + Agents SDK sample (.NET)
+
+This sample now mirrors the multichannel shape from PR #3:
+
+- **Teams SDK owns matched Teams routes**: `help`, `react`, `quote`, `targeted`, `task`, plus reaction events.
+- **Agents SDK owns everything else**: unmatched Teams turns, all non-Teams channels, `signin/*` invokes, and the `help`, `channel`, `agents sdk react`, `agents sdk proactive`, `whoami`, `mail`, `signout`, and echo routes.
+- **Channel quirks are explicit**: Teams subchannels such as `msteams:COPILOT` are treated as Teams; email auth is declined up front because OAuth cards do not work there.
 
 ## Wiring
 
 ```csharp
-using TeamsSdk;
-
-var builder = WebApplication.CreateBuilder(args);
-
 builder.AddAgent<MyAgent>();
 builder.Services.AddSingleton<IStorage, MemoryStorage>();
 builder.Services.AddAgentAspNetAuthentication(builder.Configuration);
-
-// One call: registers MyTeamsBot + its Teams SDK service chain (ApiClient /
-// ConversationClient / UserTokenClient) on a named HttpClient authed via the Agent
-// SDK's IConnections (AgentSdkAuthHandler), and installs the routing middleware on
-// the CloudAdapter pipeline.
-builder.Services.AddTeamsSdk<MyTeamsBot>();
-
-var app = builder.Build();
-app.MapAgentApplicationEndpoints(requireAuth: !app.Environment.IsDevelopment());
-app.Run();
+builder.Services.AddTeamsSdk<MyTeamsBot>(shouldBypassTeams: turnContext =>
+    turnContext.Activity.Type == ActivityTypes.Invoke
+    && !string.IsNullOrEmpty(turnContext.Activity.Name)
+    && turnContext.Activity.Name.StartsWith("signin/", StringComparison.OrdinalIgnoreCase));
 ```
 
-```csharp
-// Teams SDK handlers live on MyTeamsBot (a TeamsBotApplication subclass):
-this.OnMessage("help", async (context, ct) => await context.SendAsync(/* card */, ct));
+`AddTeamsSdk<MyTeamsBot>()` is the only integration call. It registers the Teams SDK bot,
+bridges outbound auth through the Agents SDK connection manager plus the ambient Agents SDK
+turn context, and installs the middleware that decides whether a turn stays in the Agents SDK
+or is handed to the Teams SDK. Matched Teams turns are replayed through
+`TeamsBotApplication.ProcessAsync(...)` on a synthetic `HttpContext` built from the current
+Agent turn, so Teams message turns still work when the CloudAdapter processes them on a
+background thread.
 
-// Agent SDK handlers live on MyAgent (an AgentApplication subclass):
-OnActivity(ActivityTypes.Message, OnMessageAsync, rank: RouteRank.Last);   // echo fallthrough
-```
+The optional bypass runs only for Teams-channel activities and can force a fallthrough to
+the Agents SDK even when the Teams SDK has a matching route. This sample uses it to keep
+`signin/*` invokes owned by the Agents SDK auth pipeline instead of the Teams SDK.
 
-`AddTeamsSdk<MyTeamsBot>()` is the only call you need. It registers the Teams SDK bot
-and wires its outbound HTTP through `AgentSdkAuthHandler`, which acquires Bearer tokens
-from the Agent SDK's `IConnections` — so both SDKs share one bot registration and
-credential set (`Connections` in `appsettings.json`). It also registers the bot under
-its base `TeamsBotApplication` type and installs `TeamsSdkMiddleware` (plus the
-`IMiddleware[]` the `CloudAdapter` consumes) so Teams turns are routed without you
-wiring up the pipeline by hand.
+## Route split
 
-For every `msteams` turn the middleware checks whether `MyTeamsBot` has a matching
-route; if so it hands the activity to the Teams SDK and, for `invoke` activities,
-propagates the returned `InvokeResponse` back through the Agent SDK send pipeline so
-invokes return their bodies correctly. If no Teams SDK route matches, the turn falls
-through to `MyAgent`'s handlers. Any non-`msteams` channel goes straight to `MyAgent`.
+| Surface | Commands / events | Owner |
+|---|---|---|
+| Teams messages | `help`, `react`, `quote`, `targeted`, `task` | Teams SDK |
+| Teams events | message reactions | Teams SDK |
+| Teams invokes | task module submit/fetch | Teams SDK |
+| Teams auth invokes | `signin/*` | Agents SDK |
+| Non-Teams messages | `help`, `channel`, `agents sdk react`, `agents sdk proactive`, `whoami`, `mail`, `signout`, echo | Agents SDK |
 
-## Reaching the Agent SDK `ITurnContext` from a Teams SDK handler
+## Local config
 
-```csharp
-this.OnMessage("turn context", async (context, ct) =>
+`appsettings.json` stays checked in with placeholders. Put real credentials in one of:
+
+- `appsettings.Development.json`
+- environment variables such as `Connections__ServiceConnection__Settings__ClientId`
+
+The minimal override file is:
+
+```json
 {
-    var agentCtx = TeamsSdkMiddleware.CurrentTurnContext;
-    await context.SendAsync("[Teams SDK] ...", ct);                       // Teams SDK pipeline
-    await agentCtx.SendActivityAsync(
-        MessageFactory.Text("[Agent SDK] ..."), ct);                      // Agent SDK pipeline
-});
+  "TokenValidation": {
+    "Enabled": true,
+    "Audiences": ["<client-id>"],
+    "TenantId": "<tenant-id>"
+  },
+  "Connections": {
+    "ServiceConnection": {
+      "Settings": {
+        "AuthType": "ClientSecret",
+        "AuthorityEndpoint": "https://login.microsoftonline.com/<tenant-id>",
+        "ClientId": "<client-id>",
+        "ClientSecret": "<client-secret>",
+        "Scopes": ["https://api.botframework.com/.default"]
+      }
+    }
+  }
+}
 ```
 
-`TeamsSdkMiddleware.CurrentTurnContext` returns the live Agent SDK `ITurnContext`
-that the middleware set up for the current turn. It's held in an `AsyncLocal<T>`, so it
-flows within the same async context even for non-invoke activities (processed on a
-background thread where `HttpContext` is unavailable). Reads/writes through `agentCtx`
-flow through the Agent SDK exactly as in a native `AgentApplication` turn. Use
-`RequireTurnContext()` when its absence is an error; outside a Teams SDK-handled turn
-`CurrentTurnContext` is `null`.
+## E2E setup
 
-## Architecture
+### Teams bot + Azure migration + SSO
 
+1. Create a persistent tunnel and host the sample on a stable port.
+
+   ```powershell
+   devtunnel create teams-middleware-sample --allow-anonymous
+   devtunnel port create teams-middleware-sample -p 3980 --protocol auto
+   devtunnel host teams-middleware-sample
+   ```
+
+2. Create the Teams-managed app, then migrate it to Azure.
+
+   ```powershell
+   teams app create --name "TeamsMiddlewareSample" --endpoint "https://<tunnel-id>-3980.<cluster>.devtunnels.ms/api/messages" --json
+   teams app bot migrate <teamsAppId> --subscription <subscription-id> --resource-group <rg> --create-resource-group --region westus2 --json
+   ```
+
+3. Generate a client secret and write local runtime config.
+
+   ```powershell
+   teams app auth secret create <teamsAppId> --env .\bot.env
+   ```
+
+4. Patch the Entra app for SSO:
+   - identifier URI: `api://botid-<teamsAppId>`
+   - `access_as_user` scope
+   - Bot Framework redirect URI
+   - pre-authorized Teams desktop and web clients
+
+5. Create the Azure Bot OAuth connections used by this sample.
+
+   ```powershell
+   az bot authsetting create -n <teamsAppId> -g <rg> -c graphuser --service Aadv2 --client-id <teamsAppId> --client-secret <client-secret> --provider-scope-string "User.Read" --parameters tenantId=<tenant-id> tokenExchangeUrl=api://botid-<teamsAppId>
+   az bot authsetting create -n <teamsAppId> -g <rg> -c graphmail --service Aadv2 --client-id <teamsAppId> --client-secret <client-secret> --provider-scope-string "Mail.Read" --parameters tenantId=<tenant-id> tokenExchangeUrl=api://botid-<teamsAppId>
+   ```
+
+6. Download the manifest, add:
+
+   ```json
+   "webApplicationInfo": {
+     "id": "<teamsAppId>",
+     "resource": "api://botid-<teamsAppId>"
+   }
+   ```
+
+   then upload it again:
+
+   ```powershell
+   teams app manifest download <teamsAppId> manifest.json
+   teams app manifest upload manifest.json <teamsAppId>
+   teams app doctor <teamsAppId>
+   ```
+
+### Running the sample
+
+```powershell
+cd dotnet
+dotnet build TeamsMiddleware.slnx
+$env:ASPNETCORE_ENVIRONMENT = "Development"
+dotnet run --project test_samples\TeamsMiddlewareSample --urls http://localhost:3980
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│  dotnet/libraries/TeamsSdkMiddleware/                            │
-│                                                                  │
-│  TeamsSdkMiddleware  (Agent SDK IMiddleware)               │
-│   • non-Teams channel:    → await next() (Agent SDK)             │
-│   • Teams channel:                                               │
-│       serialize Activity → Teams SDK CoreActivity (JSON)         │
-│       if no Teams SDK route matches → await next()               │
-│       else:                                                      │
-│         set AsyncLocal(agent SDK ITurnContext)                   │
-│         invoke turns:    ProcessInvokeAsync, then emit the       │
-│           InvokeResponse so the HTTP layer writes the body       │
-│         non-invoke turns: OnActivity                             │
-│         return (do NOT call next())                              │
-│                                                                  │
-│  AddTeamsSdk<T>(services)                           │
-│    → registers T + its Teams SDK ApiClient chain on an           │
-│      HttpClient whose outbound auth is AgentSdkAuthHandler       │
-│      (bridges IConnections → Bearer tokens); registers the bot   │
-│      under its base TeamsBotApplication so the middleware        │
-│      resolves it                                                 │
-│                                                                  │
-│  TeamsSdkMiddleware.CurrentTurnContext                     │
-│    → Agent SDK ITurnContext for the current turn                 │
-└──────────────────────────────────────────────────────────────────┘
-                              │ uses (no core changes)
-                              ▼
-┌──────────────────────────────────────────────────────────────────┐
-│  Microsoft.Agents.Hosting.AspNetCore  (published package)        │
-│  • CloudAdapter + IMiddleware[] pipeline                         │
-│  • MapAgentApplicationEndpoints (/api/messages)                  │
-│  • AddAgentAspNetAuthentication (Bot Framework JWT validation)   │
-└──────────────────────────────────────────────────────────────────┘
+
+### Direct Line / Web Chat
+
+The shared harness lives in `tools\webchat\`.
+
+```powershell
+az bot directline show --name <teamsAppId> --resource-group <rg> --with-secrets -o json
+py tools\webchat\serve.py
+py tools\webchat\dl_test.py help channel "agents sdk react"
 ```
 
-## Running
+### Email
 
-1. Create a bot registration (Teams CLI: `teams app create --name "TeamsMiddlewareSample" --endpoint https://your-tunnel.devtunnels.ms/api/messages --json`).
-2. Put the credentials in `appsettings.json` (`Connections` + `TokenValidation`, with `TokenValidation.Enabled = true`), or supply them as env vars (`Connections__ServiceConnection__Settings__ClientId`, `TokenValidation__Enabled`, …) to keep them out of the tracked file.
-3. Start a dev tunnel pointing at `http://localhost:3978`.
-4. From `dotnet/`: `dotnet run --project test_samples/TeamsMiddlewareSample --urls http://localhost:3978`.
-5. Install the bot in Teams using the install link from step 1 and send `help` (or `Hi` for the `[Agent SDK]` echo fallthrough).
+Email is intentionally **not** auto-configured by this repo because Azure requires a real mailbox
+address and password:
+
+```powershell
+az bot email create -n <teamsAppId> -g <rg> -a <mailbox> -p <password>
+```
+
+Once enabled, expect auth commands on email to be declined with the channel-specific explanation.
+
+## Testing matrix
+
+| Channel | Input | Expected owner | Expected outcome |
+|---|---|---|---|
+| Teams chat | `help` | Teams SDK | Adaptive Card listing Teams commands |
+| Teams chat | `react` | Teams SDK | Bot posts a message, adds 👍, then removes it |
+| Teams chat | `quote` | Teams SDK | Quoted reply |
+| Teams chat | `targeted` | Teams SDK | Targeted/private message |
+| Teams chat | `task` | Teams SDK | Task module button, fetch, submit |
+| Teams chat | react to bot message | Teams SDK | Reaction event summary |
+| Teams chat | `channel` | Agents SDK | Reports `msteams` / subchannel |
+| Teams chat | `whoami` | Agents SDK + OAuth | Sign-in confirmation, then Graph-backed user identity |
+| Teams chat | `mail` | Agents SDK + OAuth | Sign-in confirmation, then Graph mail summary |
+| Teams chat | `signout` | Agents SDK + OAuth | Sign-out confirmation |
+| Teams chat | any other text | Agents SDK | `[Agent SDK]` echo |
+| Web Chat / Direct Line | `help` | Agents SDK | Text help for non-Teams commands |
+| Web Chat / Direct Line | `agents sdk react` | Agents SDK via Teams API client | Explains that the reactions API is unavailable on Direct Line |
+| Web Chat / Direct Line | `agents sdk proactive` | Agents SDK via Teams API client | Sends a second message created through the Teams API client |
+| Web Chat / Direct Line | `mail` / `whoami` | Agents SDK + OAuth | Auth prompt or sign-in confirmation plus Graph result, depending on channel support |
+| Email | `help` | Agents SDK | First-line help text |
+| Email | `whoami` / `mail` / `signout` | Agents SDK | Auth declined with email-specific explanation |
